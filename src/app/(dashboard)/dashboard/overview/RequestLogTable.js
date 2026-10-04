@@ -4,9 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import Link from "next/link";
 import { Badge } from "@/shared/components";
-import { formatCompact, formatMs } from "./format";
+import { formatCompact, formatCost, formatMs } from "./format";
 
 const PAGE_SIZES = [25, 50, 100];
+
+const COLUMNS = [
+  { label: "Time" }, { label: "Account" }, { label: "Plan" }, { label: "API Key" },
+  { label: "Model" }, { label: "Transport" }, { label: "Status" },
+  { label: "TTFT", right: true }, { label: "TPS", right: true }, { label: "Tokens", right: true },
+  { label: "Cost", right: true }, { label: "Details" },
+];
 
 function tokenParts(t = {}) {
   const input = t.prompt_tokens ?? t.input_tokens ?? 0;
@@ -25,6 +32,13 @@ function tps(detail) {
   return output / (genMs / 1000);
 }
 
+// "/v1/responses" -> "Responses"; the API surface the client called
+function endpointLabel(endpoint) {
+  if (!endpoint) return null;
+  const last = String(endpoint).split("?")[0].split("/").filter(Boolean).pop() || endpoint;
+  return last.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function StatusPill({ status }) {
   const ok = !status || status === "success" || status === "ok" || status === "completed";
   return <Badge size="sm" variant={ok ? "success" : "error"}>{ok ? "OK" : "ERR"}</Badge>;
@@ -32,8 +46,9 @@ function StatusPill({ status }) {
 
 StatusPill.propTypes = { status: PropTypes.string };
 
-export default function RequestLogTable({ connectionNames, providers }) {
+export default function RequestLogTable({ connectionNames, plans = {} }) {
   const [rows, setRows] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, totalItems: 0 });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -50,7 +65,7 @@ export default function RequestLogTable({ connectionNames, providers }) {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (provider) params.set("provider", provider);
     if (status) params.set("status", status);
-    fetch(`/api/usage/request-details?${params}`, { cache: "no-store" })
+    fetch(`/api/usage/request-log?${params}`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -58,6 +73,7 @@ export default function RequestLogTable({ connectionNames, providers }) {
       .then((data) => {
         if (cancelled) return;
         setRows(data.details || []);
+        setProviders(data.providers || []);
         setPagination(data.pagination || { page: 1, totalPages: 1, totalItems: 0 });
       })
       .catch(() => { if (!cancelled) setRows([]); })
@@ -69,7 +85,7 @@ export default function RequestLogTable({ connectionNames, providers }) {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((d) => [d.id, d.model, d.provider, connectionNames[d.connectionId], d.status]
+    return rows.filter((d) => [d.model, d.provider, connectionNames[d.connectionId], d.apiKeyName, d.endpoint, d.status]
       .filter(Boolean).some((v) => String(v).toLowerCase().includes(q)));
   }, [rows, search, connectionNames]);
 
@@ -99,14 +115,14 @@ export default function RequestLogTable({ connectionNames, providers }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search request id, account, model, provider…"
+            placeholder="Search account, API key, model, provider…"
             className="h-8 w-full rounded-[6px] border border-border bg-bg pl-8 pr-3 text-[13px] text-text-main placeholder-text-subtle focus:border-text-subtle focus:outline-none"
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={provider} onChange={(e) => { setProvider(e.target.value); setPage(1); }} className={selectClass} aria-label="Filter by provider">
             <option value="">All providers</option>
-            {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {providers.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
           <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className={selectClass} aria-label="Filter by status">
             <option value="">All statuses</option>
@@ -121,46 +137,64 @@ export default function RequestLogTable({ connectionNames, providers }) {
       </div>
 
       <div className="overflow-x-auto rounded-[8px] border border-border bg-surface">
-        <table className="w-full min-w-[960px] text-left text-[12.5px]">
+        <table className="w-full min-w-[1180px] text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border">
-              {["Time", "Account", "Provider", "Model", "Status", "TTFT", "TPS", "Tokens", ""].map((h, i) => (
-                <th key={h || i} className={`label-caps px-3 py-2.5 font-medium ${["TTFT", "TPS", "Tokens"].includes(h) ? "text-right" : ""}`}>{h}</th>
+              {COLUMNS.map((c) => (
+                <th key={c.label} className={`label-caps border-r border-border-subtle px-3 py-2.5 font-medium last:border-r-0 ${c.right ? "text-right" : ""}`}>{c.label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading && rows.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-10 text-center text-text-muted">Loading…</td></tr>
+              <tr><td colSpan={COLUMNS.length} className="px-3 py-10 text-center text-text-muted">Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-10 text-center text-text-muted">No requests found. Request logging may be disabled in Settings.</td></tr>
-            ) : visible.map((d, idx) => {
+              <tr><td colSpan={COLUMNS.length} className="px-3 py-10 text-center text-text-muted">No requests found.</td></tr>
+            ) : visible.map((d) => {
               const t = tokenParts(d.tokens);
               const ts = new Date(d.timestamp);
-              const speed = tps(d);
+              const speed = d.latency ? tps(d) : null;
+              const account = connectionNames[d.connectionId];
+              const plan = plans[d.connectionId];
+              const transport = endpointLabel(d.endpoint);
               return (
-                <tr key={`${d.id}-${idx}`} className="border-b border-border-subtle align-top last:border-b-0 hover:bg-surface-2/50">
-                  <td className="whitespace-nowrap px-3 py-2.5">
-                    <div className="num font-medium text-text-main">{ts.toLocaleTimeString()}</div>
+                <tr key={d.id} className="border-b border-border-subtle align-top last:border-b-0 hover:bg-surface-2/50">
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <div className="num font-semibold text-text-main">{ts.toLocaleTimeString()}</div>
                     <div className="num text-[11px] text-text-muted">{ts.toLocaleDateString()}</div>
                   </td>
-                  <td className="max-w-[180px] truncate px-3 py-2.5 font-medium text-text-main" title={connectionNames[d.connectionId] || ""}>
-                    {connectionNames[d.connectionId] || <span className="text-text-muted">—</span>}
+                  <td className="max-w-[170px] truncate px-3 py-3 font-medium text-text-main" title={account || ""}>
+                    {account || <span className="text-text-muted">—</span>}
                   </td>
-                  <td className="px-3 py-2.5">
-                    <span className="rounded-[4px] border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-text-main">{d.provider}</span>
+                  <td className="px-3 py-3">
+                    {plan ? <Badge size="sm" variant="success">{plan}</Badge> : <span className="text-text-muted">—</span>}
                   </td>
-                  <td className="num max-w-[260px] truncate px-3 py-2.5 text-text-main" title={d.model}>{d.model}</td>
-                  <td className="px-3 py-2.5"><StatusPill status={d.status} /></td>
-                  <td className="num whitespace-nowrap px-3 py-2.5 text-right text-text-main">{formatMs(d.latency?.ttft)}</td>
-                  <td className="num whitespace-nowrap px-3 py-2.5 text-right text-text-main">{speed ? speed.toFixed(1) : "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 text-right">
-                    <div className="num font-medium text-text-main">{formatCompact(t.total)}</div>
+                  <td className="max-w-[140px] truncate px-3 py-3 text-[12px] text-text-muted" title={d.apiKeyName || ""}>
+                    {d.apiKeyName || "Local"}
+                  </td>
+                  <td className="num max-w-[240px] px-3 py-3 text-text-main" title={`${d.model} (${d.provider})`}>
+                    <div className="truncate font-semibold">{d.model}</div>
+                    <div className="truncate text-[11px] text-text-muted">{d.provider}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    {transport ? (
+                      <>
+                        <Badge size="sm" variant="info">{transport}</Badge>
+                        <div className="num mt-1 max-w-[140px] truncate text-[11px] text-text-muted" title={d.endpoint}>{d.endpoint}</div>
+                      </>
+                    ) : <span className="text-text-muted">—</span>}
+                  </td>
+                  <td className="px-3 py-3"><StatusPill status={d.status} /></td>
+                  <td className="num whitespace-nowrap px-3 py-3 text-right text-text-main">{formatMs(d.latency?.ttft)}</td>
+                  <td className="num whitespace-nowrap px-3 py-3 text-right text-text-main">{speed ? speed.toFixed(1) : "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right">
+                    <div className="num font-semibold text-text-main">{formatCompact(t.total)}</div>
+                    <div className="num text-[11px] text-text-muted">{formatCompact(t.reasoning)} reasoning</div>
                     {t.cached > 0 && <div className="num text-[11px] text-text-muted">{formatCompact(t.cached)} cached</div>}
-                    {t.reasoning > 0 && <div className="num text-[11px] text-text-muted">{formatCompact(t.reasoning)} reasoning</div>}
                   </td>
-                  <td className="px-3 py-2.5 text-right">
-                    <Link href="/dashboard/usage?tab=details" className="text-[12px] font-medium text-text-main hover:underline">View details</Link>
+                  <td className="num whitespace-nowrap px-3 py-3 text-right text-text-main">{d.cost > 0 ? formatCost(d.cost) : "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <Link href="/dashboard/usage?tab=details" className="text-[12px] font-semibold text-text-main hover:underline">View Details</Link>
                   </td>
                 </tr>
               );
@@ -203,5 +237,5 @@ export default function RequestLogTable({ connectionNames, providers }) {
 
 RequestLogTable.propTypes = {
   connectionNames: PropTypes.object.isRequired,
-  providers: PropTypes.array.isRequired,
+  plans: PropTypes.object,
 };

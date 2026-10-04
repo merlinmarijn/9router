@@ -285,7 +285,7 @@ export async function saveRequestUsage(entry) {
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          stringifyJson(tokens), stringifyJson(entry.latency ? { latency: entry.latency } : {}),
         ]
       );
 
@@ -312,6 +312,52 @@ export async function saveRequestUsage(entry) {
   } catch (e) {
     console.error("Failed to save usage stats:", e);
   }
+}
+
+// Paginated request log over usageHistory (always recorded, unlike the opt-in
+// requestDetails table). API keys are resolved to their display name, never returned raw.
+export async function getUsageLog(filter = {}) {
+  const db = await getAdapter();
+  const conds = [];
+  const params = [];
+
+  if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
+  if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
+  if (filter.status === "error") conds.push("status NOT IN ('ok', 'success')");
+  else if (filter.status) { conds.push("status IN ('ok', 'success')"); }
+  if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
+
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const totalItems = db.get(`SELECT COUNT(*) as c FROM usageHistory ${where}`, params)?.c || 0;
+  const page = filter.page || 1;
+  const pageSize = filter.pageSize || 25;
+  const rows = db.all(
+    `SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+    [...params, pageSize, (page - 1) * pageSize]
+  );
+
+  const apiKeyNames = {};
+  try {
+    const { getApiKeys } = await import("./apiKeysRepo.js");
+    for (const k of await getApiKeys()) apiKeyNames[k.key] = k.name;
+  } catch {}
+
+  const providers = db.all(`SELECT DISTINCT provider FROM usageHistory WHERE provider IS NOT NULL ORDER BY provider ASC`).map((r) => r.provider);
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+  return {
+    details: rows.map((r) => {
+      const meta = parseJson(r.meta, {}) || {};
+      return {
+        id: String(r.id), timestamp: r.timestamp, provider: r.provider, model: r.model,
+        connectionId: r.connectionId, endpoint: r.endpoint, cost: r.cost, status: r.status,
+        apiKeyName: r.apiKey ? (apiKeyNames[r.apiKey] || maskApiKey(r.apiKey)) : null,
+        tokens: parseJson(r.tokens, {}), latency: meta.latency || null,
+      };
+    }),
+    providers,
+    pagination: { page, pageSize, totalItems, totalPages },
+  };
 }
 
 export async function getUsageHistory(filter = {}) {

@@ -6,6 +6,7 @@ import KpiTile from "./KpiTile";
 import DonutCard from "./DonutCard";
 import AccountCard, { getAccountState } from "./AccountCard";
 import RequestLogTable from "./RequestLogTable";
+import { RedeemResetModal, getResetInfo } from "./ResetCredits";
 import {
   PERIOD_OPTIONS,
   formatCompact,
@@ -54,9 +55,10 @@ export default function OverviewClient() {
   // Seeded from the Quota Tracker's localStorage cache; stale entries refetch below
   const [quotas, setQuotas] = useState(() => getQuotaCache());
   const [quotaLoading, setQuotaLoading] = useState({});
-  const [logProviders, setLogProviders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [redeemState, setRedeemState] = useState(null);
+  const [redeemingId, setRedeemingId] = useState(null);
 
   // Period-scoped metrics
   useEffect(() => {
@@ -65,8 +67,8 @@ export default function OverviewClient() {
     Promise.allSettled([
       getJson(`/api/usage/stats?period=${period}`),
       getJson(`/api/usage/chart?period=${period}`),
-      getJson(`/api/usage/request-details?pageSize=1&startDate=${encodeURIComponent(since)}`),
-      getJson(`/api/usage/request-details?pageSize=1&status=error&startDate=${encodeURIComponent(since)}`),
+      getJson(`/api/usage/request-log?pageSize=1&startDate=${encodeURIComponent(since)}`),
+      getJson(`/api/usage/request-log?pageSize=1&status=error&startDate=${encodeURIComponent(since)}`),
     ]).then(([s, c, all, err]) => {
       if (cancelled) return;
       setStats(s.status === "fulfilled" ? s.value : null);
@@ -83,7 +85,22 @@ export default function OverviewClient() {
     setQuotaLoading((p) => ({ ...p, [conn.id]: true }));
     try {
       const data = await getJson(`/api/usage/${conn.id}`);
-      const entry = { quotas: parseQuotaData(conn.provider, data), plan: data.plan || null, message: data.message || null };
+      // Only the reset-credit summary is kept from the raw payload (same shape the Quota Tracker caches)
+      const entry = {
+        quotas: parseQuotaData(conn.provider, data),
+        plan: data.plan || null,
+        message: data.message || null,
+        raw: data.resetCredits ? { resetCredits: data.resetCredits } : undefined,
+      };
+      // Codex only reports a count in usage; the per-credit expiry list is a separate call
+      if (conn.provider === "codex" && data.resetCredits?.availableCount > 0) {
+        try {
+          const credits = await getJson(`/api/usage/${conn.id}/codex-reset-credits`);
+          entry.resetList = Array.isArray(credits.credits) ? credits.credits : [];
+        } catch {
+          entry.resetList = [];
+        }
+      }
       setQuotas((p) => ({ ...p, [conn.id]: entry }));
       setQuotaCache(conn.id, entry);
     } catch (e) {
@@ -94,19 +111,16 @@ export default function OverviewClient() {
   }, []);
 
   // Connections (all + quota-eligible) — period independent.
-  // Quota is only refetched for entries whose cache is stale (or on manual refresh)..
   // Quota is only refetched for entries whose cache is stale (or on manual refresh).
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
       getJson("/api/providers"),
       getJson(`/api/providers/client?page=1&pageSize=${MAX_QUOTA_CARDS}&accountStatus=active&sort=priority`),
-      getJson("/api/usage/providers"),
-    ]).then(([all, eligible, lp]) => {
+    ]).then(([all, eligible]) => {
       if (cancelled) return;
       setConnections(all.status === "fulfilled" ? all.value.connections || [] : []);
       setQuotaConns(eligible.status === "fulfilled" ? eligible.value.connections || [] : []);
-      setLogProviders(lp.status === "fulfilled" ? lp.value.providers || [] : []);
       const cache = getQuotaCache();
       for (const conn of eligible.status === "fulfilled" ? eligible.value.connections || [] : []) {
         const cachedAt = cache[conn.id]?.cachedAt ? new Date(cache[conn.id].cachedAt).getTime() : 0;
@@ -116,11 +130,55 @@ export default function OverviewClient() {
     return () => { cancelled = true; };
   }, [refreshKey, fetchQuota]);
 
+  const plans = useMemo(() => {
+    const map = {};
+    for (const [id, q] of Object.entries(quotas)) if (q?.plan) map[id] = q.plan;
+    return map;
+  }, [quotas]);
+
   const connectionNames = useMemo(() => {
     const map = {};
     for (const c of connections) map[c.id] = c.email || c.name || c.displayName || c.id.slice(0, 8);
     return map;
   }, [connections]);
+
+  // Open the redeem popup; a Codex entry seeded from the Quota Tracker cache has
+  // only the count, so fetch the per-credit expiry list on demand.
+  const openRedeem = useCallback(async (conn) => {
+    let entry = quotas[conn.id];
+    if (conn.provider === "codex" && entry && !entry.resetList) {
+      try {
+        const credits = await getJson(`/api/usage/${conn.id}/codex-reset-credits`);
+        entry = { ...entry, resetList: Array.isArray(credits.credits) ? credits.credits : [] };
+        setQuotas((p) => ({ ...p, [conn.id]: entry }));
+      } catch { /* show the count without expiry details */ }
+    }
+    setRedeemState({
+      conn,
+      info: getResetInfo(conn.provider, entry),
+      provider: conn.provider,
+      label: connectionNames[conn.id] || conn.email || conn.name || "this account",
+    });
+  }, [quotas, connectionNames]);
+
+  const redeemReset = useCallback(async () => {
+    const { conn, info } = redeemState;
+    setRedeemingId(conn.id);
+    try {
+      const res = conn.provider === "claude"
+        ? await fetch(`/api/usage/${conn.id}/claude-reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ grantId: info.nextGrantId }),
+        })
+        : await fetch(`/api/usage/${conn.id}/codex-reset-credits`, { method: "POST" });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.message || result.error || result.code || "Failed to redeem reset credit");
+      await fetchQuota(conn);
+    } finally {
+      setRedeemingId(null);
+    }
+  }, [redeemState, fetchQuota]);
 
   const usageByConnection = useMemo(() => {
     const map = {};
@@ -278,6 +336,7 @@ export default function OverviewClient() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {quotaConns.map((conn) => {
               const u = usageByConnection[conn.id] || { requests: 0, tokens: 0 };
+              const resetInfo = getResetInfo(conn.provider, quotas[conn.id]);
               return (
                 <AccountCard
                   key={conn.id}
@@ -285,6 +344,9 @@ export default function OverviewClient() {
                   quota={quotas[conn.id]}
                   loading={quotaLoading[conn.id]}
                   usage={{ requests: u.requests, tokensLabel: formatCompact(u.tokens) }}
+                  resetInfo={resetInfo}
+                  resetBusy={redeemingId === conn.id}
+                  onReset={() => openRedeem(conn)}
                 />
               );
             })}
@@ -292,7 +354,13 @@ export default function OverviewClient() {
         )}
       </section>
 
-      <RequestLogTable connectionNames={connectionNames} providers={logProviders} />
+      <RequestLogTable connectionNames={connectionNames} plans={plans} />
+
+      <RedeemResetModal
+        state={redeemState}
+        onClose={() => setRedeemState(null)}
+        onConfirm={redeemReset}
+      />
     </div>
   );
 }

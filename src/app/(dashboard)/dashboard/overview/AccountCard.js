@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 import Link from "next/link";
 import { Badge } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
+import { ResetButton } from "./ResetCredits";
 import {
   formatResetTime,
   getRemainingPercentage,
@@ -54,7 +55,7 @@ function QuotaMeter({ quota }) {
 
 QuotaMeter.propTypes = { quota: PropTypes.object.isRequired };
 
-export default function AccountCard({ connection, quota, loading, usage }) {
+export default function AccountCard({ connection, quota, loading, usage, resetInfo, resetBusy, onReset }) {
   const state = getAccountState(connection);
   const label = connection.email || connection.name || connection.displayName || connection.id.slice(0, 8);
   const quotas = (quota?.quotas || []).slice(0, 2);
@@ -113,6 +114,7 @@ export default function AccountCard({ connection, quota, loading, usage }) {
           <span className="material-symbols-outlined text-[14px]">data_usage</span>
           Quota
         </Link>
+        <ResetButton info={resetInfo} onClick={onReset} busy={resetBusy} />
       </div>
     </div>
   );
@@ -123,4 +125,7 @@ AccountCard.propTypes = {
   quota: PropTypes.object,
   loading: PropTypes.bool,
   usage: PropTypes.shape({ requests: PropTypes.number, tokensLabel: PropTypes.string }).isRequired,
+  resetInfo: PropTypes.object,
+  resetBusy: PropTypes.bool,
+  onReset: PropTypes.func,
 };
