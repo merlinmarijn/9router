@@ -18,10 +18,14 @@ function buildProviderEntry(r) {
   }
   const display = { ...(r.display || {}) };
   if (display.deprecationNotice === "RISK_NOTICE") display.deprecationNotice = RISK_NOTICE;
+  // Public model prefix is always the provider id; old short aliases stay accepted as input.
+  const legacyAliases = [...new Set([r.uiAlias, r.alias, ...(r.aliases || [])])]
+    .filter((a) => a && a !== r.id);
   return {
     ...display,
     id: r.id,
-    alias: r.uiAlias || r.alias,
+    alias: r.id,
+    ...(legacyAliases.length ? { legacyAliases } : {}),
     ...(r.hidden ? { hidden: true } : {}),
     ...mediaFields,
     ...(r.priority !== undefined ? { priority: r.priority } : {}),
@@ -108,14 +112,16 @@ export const AUTH_METHODS = {
   cookie: { id: "cookie" },
 };
 
-// Helper: Get provider by alias
+// Alias to ID mapping (for quick lookup) — ids win over legacy short aliases
+export const ALIAS_TO_ID = {};
+for (const p of Object.values(AI_PROVIDERS)) {
+  for (const a of p.legacyAliases || []) ALIAS_TO_ID[a] = p.id;
+}
+for (const p of Object.values(AI_PROVIDERS)) ALIAS_TO_ID[p.id] = p.id;
+
+// Helper: Get provider by alias (provider id or legacy short alias)
 export function getProviderByAlias(alias) {
-  for (const provider of Object.values(AI_PROVIDERS)) {
-    if (provider.alias === alias || provider.id === alias) {
-      return provider;
-    }
-  }
-  return null;
+  return AI_PROVIDERS[ALIAS_TO_ID[alias]] || null;
 }
 
 // Helper: Get provider ID from alias
@@ -124,17 +130,10 @@ export function resolveProviderId(aliasOrId) {
   return provider?.id || aliasOrId;
 }
 
-// Helper: Get alias from provider ID
+// Helper: Get public model prefix for a provider (its id; legacy aliases resolve to it)
 export function getProviderAlias(providerId) {
-  const provider = AI_PROVIDERS[providerId];
-  return provider?.alias || providerId;
+  return ALIAS_TO_ID[providerId] || providerId;
 }
-
-// Alias to ID mapping (for quick lookup)
-export const ALIAS_TO_ID = Object.values(AI_PROVIDERS).reduce((acc, p) => {
-  acc[p.alias] = p.id;
-  return acc;
-}, {});
 
 // ID to Alias mapping
 export const ID_TO_ALIAS = Object.values(AI_PROVIDERS).reduce((acc, p) => {

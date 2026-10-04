@@ -11,13 +11,24 @@ export { PROVIDER_MODELS };
 const isOpenCodeAlias = (aliasOrId) => !aliasOrId || ["oc", "opencode", "ocg", "opencode-go", "ocz", "opencode-zen"].includes(aliasOrId);
 
 
+// PROVIDER_MODELS is keyed by registry `alias || id`; accept the provider id and every
+// legacy short alias too, since public model strings now use the provider id as prefix.
+const MODELS_KEY = {};
+for (const r of REGISTRY) MODELS_KEY[r.id] = r.alias || r.id;
+for (const r of REGISTRY) {
+  for (const k of [r.alias, r.uiAlias, ...(r.aliases || [])]) {
+    if (k && !(k in MODELS_KEY)) MODELS_KEY[k] = r.alias || r.id;
+  }
+}
+const modelsFor = (aliasOrId) => PROVIDER_MODELS[aliasOrId] || PROVIDER_MODELS[MODELS_KEY[aliasOrId]];
+
 // Helper functions
 export function getProviderModels(aliasOrId) {
-  return PROVIDER_MODELS[aliasOrId] || [];
+  return modelsFor(aliasOrId) || [];
 }
 
 export function getDefaultModel(aliasOrId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   return models?.[0]?.id || null;
 }
 
@@ -43,13 +54,13 @@ function findModel(models, modelId, aliasOrId) {
 
 export function isValidModel(aliasOrId, modelId, passthroughProviders = new Set()) {
   if (passthroughProviders.has(aliasOrId)) return true;
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   if (!models) return false;
   return !!findModel(models, modelId, aliasOrId);
 }
 
 export function findModelName(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   if (!models) return modelId;
   const found = findModel(models, modelId, aliasOrId);
   return found?.name || modelId;
@@ -59,7 +70,7 @@ export function getModelTargetFormat(aliasOrId, modelId) {
   if (isOpenCodeAlias(aliasOrId) && isMuseSparkModel(modelId)) {
     return FORMATS.OPENAI_RESPONSES;
   }
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   if (!models) return null;
   const found = findModel(models, modelId, aliasOrId);
   if (found) return modelTargetFormat(found);
@@ -73,7 +84,7 @@ export function getModelTargetFormat(aliasOrId, modelId) {
 // Unknown OpenCode ids fall back to the family regex (chat lane by default) so
 // auto-fetched models never wrongly use the sourceFormat-matched transport.
 export function getModelSupportedFormats(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   if (!models) return null;
   const found = findModel(models, modelId, aliasOrId);
   if (found) return modelSupportedFormats(found);
@@ -82,7 +93,7 @@ export function getModelSupportedFormats(aliasOrId, modelId) {
 }
 
 export function getModelType(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   if (!models) return null;
   const found = findModel(models, modelId, aliasOrId);
   return found?.kind || found?.type || null;
@@ -94,7 +105,7 @@ export function getModelUpstreamId(aliasOrId, modelId) {
   const sufMatch = typeof modelId === "string" ? modelId.match(/\([^()]+\)\s*$/) : null;
   const suffix = sufMatch ? sufMatch[0] : "";
   const baseId = suffix ? modelId.slice(0, sufMatch.index).trim() : modelId;
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   const found = findModel(models, baseId, aliasOrId);
   const resolvedId = found?.upstreamModelId || found?.id;
   if (resolvedId) {
@@ -103,14 +114,14 @@ export function getModelUpstreamId(aliasOrId, modelId) {
     const resolvedBase = presetSuffix ? resolvedId.slice(0, presetMatch.index).trim() : resolvedId;
     return resolvedBase + (suffix || presetSuffix);
   }
-  if (aliasOrId === "cx" && typeof baseId === "string" && baseId.endsWith(CODEX_REVIEW_SUFFIX)) {
+  if (MODELS_KEY[aliasOrId] === "cx" && typeof baseId === "string" && baseId.endsWith(CODEX_REVIEW_SUFFIX)) {
     return baseId.slice(0, -CODEX_REVIEW_SUFFIX.length) + suffix;
   }
   return baseId + suffix;
 }
 
 export function getModelQuotaFamily(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = modelsFor(aliasOrId);
   return modelQuotaFamily(findModel(models, modelId, aliasOrId));
 }
 
@@ -127,11 +138,11 @@ export const PROVIDER_ID_TO_ALIAS = Object.fromEntries(
 
 export function getModelsByProviderId(providerId) {
   const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
-  return PROVIDER_MODELS[alias] || [];
+  return modelsFor(alias) || [];
 }
 
 // Get strip list for a model entry (explicit opt-in only)
 // Returns array of content types to strip, e.g. ["image", "audio"]
 export function getModelStrip(alias, modelId) {
-  return modelStrip(findModel(PROVIDER_MODELS[alias], modelId, alias));
+  return modelStrip(findModel(modelsFor(alias), modelId, alias));
 }

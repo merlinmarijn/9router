@@ -96,7 +96,7 @@ export function mergeWithDefaults(raw) {
       const entry = merged.capacityAdapter[capKey];
       if (Array.isArray(entry?.models)) {
         entry.models = entry.models.map((m) =>
-          m === "oc/mimo-v2.5-free" ? "oc/mimo-v2.6-flash-free" : m
+          m === "oc/mimo-v2.5-free" || m === "opencode/mimo-v2.5-free" ? "opencode/mimo-v2.6-flash-free" : m
         );
       }
     }

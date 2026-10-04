@@ -12,7 +12,8 @@ describe("provider display split (E1)", () => {
     expect(kiro.icon).toBe("psychology_alt");
     // transport kept
     expect(kiro.id).toBe("kiro");
-    expect(kiro.alias).toBe("kr");
+    expect(kiro.alias).toBe("kiro");
+    expect(kiro.legacyAliases).toContain("kr");
     // transport-heavy provider keeps its config
     expect(AI_PROVIDERS.gemini.serviceKinds).toContain("tts");
     expect(AI_PROVIDERS.gemini.ttsConfig).toBeTruthy();

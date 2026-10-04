@@ -244,7 +244,8 @@ describe("MiMo Free provider registration", () => {
   });
 
   it("lists mimo-free in the dashboard FREE_PROVIDERS catalog", () => {
-    expect(FREE_PROVIDERS["mimo-free"]?.alias).toBe("mmf");
+    expect(FREE_PROVIDERS["mimo-free"]?.alias).toBe("mimo-free");
+    expect(FREE_PROVIDERS["mimo-free"]?.legacyAliases).toContain("mmf");
     expect(FREE_PROVIDERS["mimo-free"]?.noAuth).toBe(true);
   });
 });

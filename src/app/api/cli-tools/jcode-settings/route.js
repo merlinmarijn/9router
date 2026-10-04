@@ -155,7 +155,7 @@ export async function POST(request) {
       auth: "bearer",
       api_key_env: "JCODE_9ROUTER_API_KEY",
       env_file: "provider-9router.env",
-      default_model: models && models.length > 0 ? models[0] : "cc/claude-opus-4-7",
+      default_model: models && models.length > 0 ? models[0] : "claude/claude-opus-4-7",
       requires_api_key: true,
     };
 

@@ -7,7 +7,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import { rememberEndpoint } from "./cliEndpointPresets";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
-import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { getModelsByProviderId } from "@/shared/constants/models";
 
 export default function GenericCliToolCard({
   tool,
@@ -202,7 +202,7 @@ export default function GenericCliToolCard({
   const handleAddAllActiveModels = () => {
     const allModels = [];
     activeProviders.forEach((conn) => {
-      const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
+      const alias = conn.provider;
       const providerModels = getModelsByProviderId(conn.provider);
       providerModels.forEach((m) => {
         const val = `${alias}/${m.id}`;

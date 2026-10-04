@@ -21,7 +21,7 @@ const CAPACITY_ADAPTER_CAPS = [
   // pdf, videoInput temporarily hidden — no translator support yet for those blocks.
   { key: "audioInput", label: "Audio", icon: "graphic_eq", desc: "audio input" },
 ];
-const DEFAULT_FALLBACK_MODEL = "oc/mimo-v2.6-flash-free";
+const DEFAULT_FALLBACK_MODEL = "opencode/mimo-v2.6-flash-free";
 const EMPTY_CAP_ENTRY = { enabled: true, roundRobin: false, models: [] };
 const EMPTY_CAPACITY_ADAPTER = {
   vision: { ...EMPTY_CAP_ENTRY },
@@ -29,7 +29,7 @@ const EMPTY_CAPACITY_ADAPTER = {
   audioInput: { ...EMPTY_CAP_ENTRY },
   videoInput: { ...EMPTY_CAP_ENTRY },
 };
-const upgradeLegacyModel = (m) => (m === "oc/mimo-v2.5-free" ? DEFAULT_FALLBACK_MODEL : m);
+const upgradeLegacyModel = (m) => (m === "oc/mimo-v2.5-free" || m === "opencode/mimo-v2.5-free" ? DEFAULT_FALLBACK_MODEL : m);
 
 // Backward-compat: legacy stored form was an array of {model, enabled}.
 function normalizeCapEntry(entry) {

@@ -10,13 +10,13 @@ import { CLI_TOOLS } from "@/shared/constants/cliTools";
 export const VALID_COMBO_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 export const PRESET_SOURCES = new Set(["cursor", "claude"]);
 
-const CURSOR_ALIAS = "cu";
-const CLAUDE_ALIAS = "cc";
+const CURSOR_ALIAS = "cursor";
+const CLAUDE_ALIAS = "claude";
 
 /** Extra Claude Code aliases not listed in defaultModels. */
 const CLAUDE_EXTRA_ALIAS_TARGETS = {
-  default: "cc/claude-sonnet-5",
-  opusplan: "cc/claude-opus-5",
+  default: "claude/claude-sonnet-5",
+  opusplan: "claude/claude-opus-5",
 };
 
 /**
