@@ -4,7 +4,9 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
-import Header from "../Header";
+import TopNav from "../TopNav";
+import PageHeading from "../PageHeading";
+import StatusFooter from "../StatusFooter";
 
 function getToastStyle(type) {
   if (type === "success") {
@@ -55,8 +57,10 @@ export default function DashboardLayout({ children }) {
     }
   }, []);
 
+  const isChat = pathname === "/dashboard/basic-chat";
+
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-bg">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-bg">
       <div className="fixed top-4 right-4 z-[80] flex w-[min(92vw,380px)] flex-col gap-2">
         {notifications.map((n) => {
           const style = getToastStyle(n.type);
@@ -94,11 +98,6 @@ export default function DashboardLayout({ children }) {
         />
       )}
 
-      {/* Sidebar - Desktop */}
-      <div className="hidden lg:flex">
-        <Sidebar />
-      </div>
-
       {/* Sidebar - Mobile */}
       <div
         className={`fixed inset-y-0 left-0 z-50 transform lg:hidden transition-transform duration-300 ease-in-out ${
@@ -108,15 +107,20 @@ export default function DashboardLayout({ children }) {
         <Sidebar onClose={() => setSidebarOpen(false)} />
       </div>
 
+      {/* Top navigation (codex-lb style) — replaces the desktop sidebar */}
+      <TopNav onMenuClick={() => setSidebarOpen(true)} />
+
       {/* Main content */}
-      <main className="flex flex-col flex-1 h-full min-w-0 relative transition-colors duration-300 isolate">
-        {/* Faint grid background */}
-        <div className="landing-grid absolute inset-0 pointer-events-none -z-10" aria-hidden="true" />
-        <Header key={pathname} onMenuClick={() => setSidebarOpen(true)} />
-        <div className={`flex-1 overflow-y-auto custom-scrollbar ${pathname === "/dashboard/basic-chat" ? "" : "p-6 lg:p-10"} ${pathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
-          <div className={`${pathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>{children}</div>
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className={`flex-1 overflow-y-auto custom-scrollbar ${isChat ? "flex flex-col overflow-hidden" : "px-4 py-6 lg:px-6 lg:py-8"}`}>
+          <div className={isChat ? "flex-1 w-full h-full flex flex-col" : "mx-auto w-full max-w-[1400px]"}>
+            {!isChat && <PageHeading pathname={pathname} />}
+            {children}
+          </div>
         </div>
       </main>
+
+      <StatusFooter />
     </div>
   );
 }

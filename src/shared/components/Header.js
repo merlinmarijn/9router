@@ -15,7 +15,7 @@ import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { translate } from "@/i18n/runtime";
 
-const getPageInfo = (pathname) => {
+export const getPageInfo = (pathname) => {
   if (!pathname) return { title: "", description: "", breadcrumbs: [] };
 
   // Media provider detail: /dashboard/media-providers/[kind]/[id]
@@ -171,9 +171,9 @@ const getPageInfo = (pathname) => {
     };
   if (pathname === "/dashboard")
     return {
-      title: "Endpoint",
-      description: "API endpoint configuration",
-      icon: "api",
+      title: "Dashboard",
+      description: "Overview, account health, and recent request logs.",
+      icon: "space_dashboard",
       breadcrumbs: [],
     };
   return { title: "", description: "", breadcrumbs: [] };
@@ -333,7 +333,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   );
 }
 
-function HeaderSearch() {
+export function HeaderSearch() {
   const visible = useHeaderSearchStore((s) => s.visible);
   const query = useHeaderSearchStore((s) => s.query);
   const placeholder = useHeaderSearchStore((s) => s.placeholder);

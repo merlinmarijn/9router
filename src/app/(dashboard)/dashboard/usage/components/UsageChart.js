@@ -71,7 +71,7 @@ export default function UsageChart({ period = "7d" }) {
           <button
             key={m.value}
             onClick={() => setViewMode(m.value)}
-            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === m.value ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === m.value ? "bg-primary text-primary-fg shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
           >
             {m.label}
           </button>

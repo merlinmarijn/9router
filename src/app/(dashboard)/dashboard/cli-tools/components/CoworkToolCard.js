@@ -596,7 +596,7 @@ export default function CoworkToolCard({
                   setCustomPlugins((prev) => [...prev.filter((x) => x.name !== name), { name, url: addMcpForm.url.trim(), transport: "sse", custom: true }]);
                   setAddMcpOpen(false);
                 }}
-                className="px-3 py-1.5 rounded bg-primary text-white text-xs font-medium hover:opacity-90 cursor-pointer"
+                className="px-3 py-1.5 rounded bg-primary text-primary-fg text-xs font-medium hover:opacity-90 cursor-pointer"
               >Add</button>
             </div>
           </div>

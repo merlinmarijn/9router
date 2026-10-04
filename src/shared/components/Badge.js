@@ -3,12 +3,12 @@
 import { cn } from "@/shared/utils/cn";
 
 const variants = {
-  default: "bg-surface-2 text-text-muted",
-  primary: "bg-brand-500/10 text-brand-600 dark:text-brand-300",
-  success: "bg-green-500/10 text-green-600 dark:text-green-400",
-  warning: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
-  error: "bg-red-500/10 text-red-600 dark:text-red-400",
-  info: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  default: "bg-surface-2 text-text-muted border-border",
+  primary: "bg-surface-2 text-text-main border-border",
+  success: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/25",
+  warning: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25",
+  error: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/25",
+  info: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25",
 };
 
 const sizes = {
@@ -28,7 +28,7 @@ export default function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full font-semibold",
+        "inline-flex items-center gap-1.5 rounded-full border font-medium",
         variants[variant],
         sizes[size],
         className
@@ -39,11 +39,11 @@ export default function Badge({
           className={cn(
             "size-1.5 rounded-full",
             variant === "success" && "bg-green-500",
-            variant === "warning" && "bg-yellow-500",
+            variant === "warning" && "bg-amber-500",
             variant === "error" && "bg-red-500",
             variant === "info" && "bg-blue-500",
-            variant === "primary" && "bg-brand-500",
-            variant === "default" && "bg-gray-500"
+            variant === "primary" && "bg-text-main",
+            variant === "default" && "bg-text-subtle"
           )}
         />
       )}
