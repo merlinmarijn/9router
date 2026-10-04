@@ -7,6 +7,7 @@ import DonutCard from "./DonutCard";
 import AccountCard, { getAccountState } from "./AccountCard";
 import RequestLogTable from "./RequestLogTable";
 import { RedeemResetModal, getResetInfo } from "./ResetCredits";
+import { Toggle } from "@/shared/components";
 import {
   PERIOD_OPTIONS,
   formatCompact,
@@ -25,6 +26,8 @@ const SERIES = ["var(--color-chart-1)", "var(--color-chart-2)", "var(--color-cha
 const OTHER = "var(--color-chart-other)";
 const MAX_QUOTA_CARDS = 12;
 const QUOTA_CACHE_FRESH_MS = 5 * 60 * 1000;
+const AUTO_REDEEM_PROVIDERS = new Set(["codex", "claude"]);
+const AUTO_REDEEM_VALUES = { default: null, on: true, off: false };
 
 function providerName(id) {
   return AI_PROVIDERS[id]?.name || id;
@@ -59,6 +62,47 @@ export default function OverviewClient() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [redeemState, setRedeemState] = useState(null);
   const [redeemingId, setRedeemingId] = useState(null);
+  const [autoRedeemGlobal, setAutoRedeemGlobal] = useState(false);
+  const [autoRedeemSaving, setAutoRedeemSaving] = useState({});
+
+  useEffect(() => {
+    getJson("/api/settings")
+      .then((s) => setAutoRedeemGlobal(s.autoRedeemExpiringResets === true))
+      .catch(() => {});
+  }, []);
+
+  const toggleAutoRedeemGlobal = useCallback(async (enabled) => {
+    setAutoRedeemSaving((p) => ({ ...p, global: true }));
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoRedeemExpiringResets: enabled }),
+      });
+      if (res.ok) setAutoRedeemGlobal(enabled);
+    } finally {
+      setAutoRedeemSaving((p) => ({ ...p, global: false }));
+    }
+  }, []);
+
+  // null clears the override so the connection follows the global setting
+  const setAutoRedeemOverride = useCallback(async (conn, mode) => {
+    const value = AUTO_REDEEM_VALUES[mode];
+    setAutoRedeemSaving((p) => ({ ...p, [conn.id]: true }));
+    try {
+      const res = await fetch(`/api/providers/${conn.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerSpecificData: { autoRedeemResets: value } }),
+      });
+      if (!res.ok) return;
+      setQuotaConns((list) => list.map((c) => (c.id === conn.id
+        ? { ...c, providerSpecificData: { ...(c.providerSpecificData || {}), autoRedeemResets: value } }
+        : c)));
+    } finally {
+      setAutoRedeemSaving((p) => ({ ...p, [conn.id]: false }));
+    }
+  }, []);
 
   // Period-scoped metrics
   useEffect(() => {
@@ -327,6 +371,14 @@ export default function OverviewClient() {
           <span className="text-text-muted"><span className="num font-semibold text-green-500">{activeCount}</span> active</span>
           <span className="text-text-muted"><span className="num font-semibold text-red-500">{unavailableCount}</span> unavailable</span>
           <div className="section-rule" />
+          <Toggle
+            size="sm"
+            checked={autoRedeemGlobal}
+            disabled={autoRedeemSaving.global}
+            onChange={toggleAutoRedeemGlobal}
+            label="Auto-redeem expiring resets"
+            className="shrink-0 whitespace-nowrap text-text-muted"
+          />
         </div>
         {quotaConns.length === 0 ? (
           <div className="rounded-[8px] border border-dashed border-border px-4 py-8 text-center text-[13px] text-text-muted">
@@ -347,6 +399,11 @@ export default function OverviewClient() {
                   resetInfo={resetInfo}
                   resetBusy={redeemingId === conn.id}
                   onReset={() => openRedeem(conn)}
+                  autoRedeem={AUTO_REDEEM_PROVIDERS.has(conn.provider) ? {
+                    globalEnabled: autoRedeemGlobal,
+                    busy: autoRedeemSaving[conn.id],
+                    onChange: (mode) => setAutoRedeemOverride(conn, mode),
+                  } : undefined}
                 />
               );
             })}

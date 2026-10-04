@@ -92,6 +92,15 @@ export const QUOTA_AUTOPING_CONFIG = {
   },
 };
 
+// Reset auto-redeem: spend a Codex/Claude reset credit just before it expires unused.
+export const RESET_AUTOREDEEM_CONFIG = {
+  tickIntervalMs: 60000,                // scheduler tick
+  leadMs: 300000,                       // redeem when a credit expires within 5min
+  pollIntervalMs: 900000,               // refetch expiry list at most this often outside the window
+  failureCooldownMs: 900000,            // back off after auth/fetch failures
+  attemptTtlMs: 86400000,               // forget attempted credits after a day
+};
+
 // Re-export from providers.js for backward compatibility
 export {
   FREE_PROVIDERS,

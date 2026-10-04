@@ -96,6 +96,51 @@ ResetButton.propTypes = {
   busy: PropTypes.bool,
 };
 
+const AUTO_REDEEM_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
+export function autoRedeemMode(connection) {
+  const v = connection?.providerSpecificData?.autoRedeemResets;
+  return v === true ? "on" : v === false ? "off" : "default";
+}
+
+// Per-connection override of the global "auto-redeem expiring resets" setting
+export function AutoRedeemSelect({ connection, globalEnabled, onChange, busy }) {
+  const mode = autoRedeemMode(connection);
+  const effective = mode === "default" ? globalEnabled : mode === "on";
+  return (
+    <label
+      className="flex items-center gap-1"
+      title={`Auto-redeem a reset credit 5 minutes before it expires (currently ${effective ? "on" : "off"})`}
+    >
+      <span className={`material-symbols-outlined text-[14px] ${effective ? "text-green-500" : ""}`}>autorenew</span>
+      <select
+        value={mode}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Auto-redeem expiring resets"
+        className="bg-transparent text-[11.5px] text-text-muted hover:text-text-main focus:outline-none disabled:opacity-50"
+      >
+        {AUTO_REDEEM_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.value === "default" ? `Auto (${globalEnabled ? "on" : "off"})` : `Auto ${o.label.toLowerCase()}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+AutoRedeemSelect.propTypes = {
+  connection: PropTypes.object.isRequired,
+  globalEnabled: PropTypes.bool,
+  onChange: PropTypes.func.isRequired,
+  busy: PropTypes.bool,
+};
+
 export function RedeemResetModal({ state, onClose, onConfirm }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);

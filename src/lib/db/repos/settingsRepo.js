@@ -65,6 +65,8 @@ const DEFAULT_SETTINGS = {
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  // Redeem Codex/Claude reset credits 5min before they expire; connections may override via providerSpecificData.autoRedeemResets
+  autoRedeemExpiringResets: false,
   // Per-provider user header overrides applied at dispatch: { [providerId]: { headers: {..} } }
   providerOverrides: {},
 };

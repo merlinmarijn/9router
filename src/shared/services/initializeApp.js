@@ -113,6 +113,11 @@ async function runHeavyStartup() {
       .catch((e) => console.log("[AutoPing] scheduler start failed:", e.message));
   }
 
+  // Cheap when disabled: each tick only reads settings + connections until something opts in
+  import("@/shared/services/resetAutoRedeem")
+    .then(({ startResetAutoRedeem }) => startResetAutoRedeem())
+    .catch((e) => console.log("[ResetAutoRedeem] scheduler start failed:", e.message));
+
   // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
   // and also started from custom-server.js when that entry is used.
   import("@/sse/services/backgroundTokenRefresh.js")

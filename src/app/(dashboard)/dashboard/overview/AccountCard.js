@@ -4,7 +4,7 @@ import PropTypes from "prop-types";
 import Link from "next/link";
 import { Badge } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { ResetButton } from "./ResetCredits";
+import { AutoRedeemSelect, ResetButton } from "./ResetCredits";
 import {
   formatResetTime,
   getRemainingPercentage,
@@ -55,7 +55,7 @@ function QuotaMeter({ quota }) {
 
 QuotaMeter.propTypes = { quota: PropTypes.object.isRequired };
 
-export default function AccountCard({ connection, quota, loading, usage, resetInfo, resetBusy, onReset }) {
+export default function AccountCard({ connection, quota, loading, usage, resetInfo, resetBusy, onReset, autoRedeem }) {
   const state = getAccountState(connection);
   const label = connection.email || connection.name || connection.displayName || connection.id.slice(0, 8);
   const quotas = (quota?.quotas || []).slice(0, 2);
@@ -115,6 +115,7 @@ export default function AccountCard({ connection, quota, loading, usage, resetIn
           Quota
         </Link>
         <ResetButton info={resetInfo} onClick={onReset} busy={resetBusy} />
+        {autoRedeem && <span className="ml-auto"><AutoRedeemSelect connection={connection} {...autoRedeem} /></span>}
       </div>
     </div>
   );
@@ -128,4 +129,5 @@ AccountCard.propTypes = {
   resetInfo: PropTypes.object,
   resetBusy: PropTypes.bool,
   onReset: PropTypes.func,
+  autoRedeem: PropTypes.shape({ globalEnabled: PropTypes.bool, onChange: PropTypes.func, busy: PropTypes.bool }),
 };
