@@ -4,6 +4,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { MOST_QUOTA_STRATEGY, pickByQuota, rankByQuota, noteQuotaActivity, isOverQuotaBudget } from "./quotaRouting.js";
 import { getSessionBinding, setSessionBinding, touchSessionBinding, deleteSessionBinding } from "@/lib/sessionAffinity.js";
 import * as log from "../utils/logger.js";
 
@@ -23,10 +24,11 @@ function githubMonthlyResetMs(status, errorText, provider) {
 }
 
 /**
- * Pick a connection with the configured fallback strategy (fill-first / round-robin).
+ * Pick a connection with the configured fallback strategy (fill-first / round-robin / most-quota).
  * Round-robin persists lastUsedAt/consecutiveUseCount, so call it inside the selection mutex.
  */
-async function pickByStrategy(availableConnections, strategy, providerOverride, settings) {
+async function pickByStrategy(availableConnections, strategy, providerOverride, settings, model = null) {
+  if (strategy === MOST_QUOTA_STRATEGY) return pickByQuota(availableConnections, model);
   if (strategy !== "round-robin") {
     // Default: fill-first (already sorted by priority in getProviderConnections)
     return availableConnections[0];
@@ -232,14 +234,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         deleteSessionBinding(key);
         binding = null;
       }
+      // codex-lb budget pressure: an owner nearly out of quota hands the session to a
+      // healthier account — only when one exists, otherwise moving just loses the cache.
+      if (binding && pinnedAvailable && strategy === MOST_QUOTA_STRATEGY && isOverQuotaBudget(pinned)) {
+        const best = rankByQuota(availableConnections, model)[0];
+        if (best && best !== pinned && !isOverQuotaBudget(best)) {
+          log.info("AUTH", `${provider} | session owner ${pinned.id?.slice(0, 8)} near quota limit → reassigning`);
+          deleteSessionBinding(key);
+          binding = null;
+        }
+      }
 
       if (!binding) {
-        connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
+        connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings, model);
         setSessionBinding(key, providerId, connection.id, ttlMs);
         log.info("AUTH", `${provider} | session bound to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       } else if (pinnedAvailable) {
         connection = pinned;
         touchSessionBinding(key, ttlMs);
+        if (strategy === MOST_QUOTA_STRATEGY) noteQuotaActivity(connection, model);
         log.debug("AUTH", `${provider} | session affinity → ${connection.id?.slice(0, 8)}`);
       } else if (mode === "strict") {
         // Temporarily blocked: keep ownership and surface the cooldown instead of moving the session
@@ -258,7 +271,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         // Soft: serve from a sticky stand-in while the owner cools down; the owner keeps the binding
         connection = availableConnections.find((c) => c.id === binding.fallbackConnectionId);
         if (!connection) {
-          connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
+          connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings, model);
           binding.fallbackConnectionId = connection.id;
         }
         touchSessionBinding(key, ttlMs);
@@ -266,7 +279,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     }
     if (!connection) {
-      connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
+      connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings, model);
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});

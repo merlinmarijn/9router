@@ -424,6 +424,15 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                 />
               </div>
             )}
+            <span className="text-xs text-text-muted font-medium">Most Quota</span>
+            <Toggle
+              checked={providerStrategy === "most-quota"}
+              onChange={(enabled) => {
+                const strategy = enabled ? "most-quota" : null;
+                setProviderStrategy(strategy);
+                saveStrategy(strategy, providerStickyLimit);
+              }}
+            />
           </div>
         </div>
 

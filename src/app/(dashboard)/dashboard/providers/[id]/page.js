@@ -412,6 +412,12 @@ export default function ProviderDetailPage() {
     saveProviderStrategy(strategy, sticky);
   };
 
+  const handleMostQuotaToggle = (enabled) => {
+    const strategy = enabled ? "most-quota" : null;
+    setProviderStrategy(strategy);
+    saveProviderStrategy(strategy, providerStickyLimit);
+  };
+
   const handleStickyLimitChange = (value) => {
     setProviderStickyLimit(value);
     saveProviderStrategy("round-robin", value);
@@ -1580,6 +1586,14 @@ export default function ProviderDetailPage() {
                     />
                   </div>
                 )}
+              </div>
+              {/* Most Quota Left toggle */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-text-muted font-medium">Most Quota</span>
+                <Toggle
+                  checked={providerStrategy === "most-quota"}
+                  onChange={handleMostQuotaToggle}
+                />
               </div>
             </div>
           </div>

@@ -1544,6 +1544,21 @@ export default function ProfilePage() {
               </div>
             )}
 
+            {/* Most Quota Left */}
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Most Quota Left</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  Send new sessions to the account with the most weekly quota left (then 5h, then least recently used)
+                </p>
+              </div>
+              <Toggle
+                checked={settings.fallbackStrategy === "most-quota"}
+                onChange={() => updateFallbackStrategy(settings.fallbackStrategy === "most-quota" ? "fill-first" : "most-quota")}
+                disabled={loading}
+              />
+            </div>
+
             {/* Combo Round Robin */}
             <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
               <div className="flex-1 min-w-0">
@@ -1583,7 +1598,9 @@ export default function ProfilePage() {
             <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
               {settings.fallbackStrategy === "round-robin"
                 ? `Currently distributing requests across all available accounts with ${settings.stickyRoundRobinLimit || 3} calls per account.`
-                : "Currently using accounts in priority order (Fill First)."}
+                : settings.fallbackStrategy === "most-quota"
+                  ? "Currently picking the account with the most quota left."
+                  : "Currently using accounts in priority order (Fill First)."}
               {settings.comboStrategy === "round-robin"
                 ? ` Combos rotate after ${settings.comboStickyRoundRobinLimit || 1} call${(settings.comboStickyRoundRobinLimit || 1) === 1 ? "" : "s"} per model.`
                 : " Combos always start with their first model."}
