@@ -1,13 +1,17 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, getModelLockKey } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { getSessionBinding, setSessionBinding, touchSessionBinding, deleteSessionBinding } from "@/lib/sessionAffinity.js";
 import * as log from "../utils/logger.js";
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
+
+// Auth/permission failures mean a pinned account is unusable, not just cooling down
+const AFFINITY_PERMANENT_ERROR_CODES = new Set([401, 403]);
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
@@ -19,11 +23,71 @@ function githubMonthlyResetMs(status, errorText, provider) {
 }
 
 /**
+ * Pick a connection with the configured fallback strategy (fill-first / round-robin).
+ * Round-robin persists lastUsedAt/consecutiveUseCount, so call it inside the selection mutex.
+ */
+async function pickByStrategy(availableConnections, strategy, providerOverride, settings) {
+  if (strategy !== "round-robin") {
+    // Default: fill-first (already sorted by priority in getProviderConnections)
+    return availableConnections[0];
+  }
+
+  const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
+
+  // Sort by lastUsed (most recent first) to find current candidate
+  const byRecency = [...availableConnections].sort((a, b) => {
+    if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+    if (!a.lastUsedAt) return 1;
+    if (!b.lastUsedAt) return -1;
+    return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
+  });
+
+  const current = byRecency[0];
+  const currentCount = current?.consecutiveUseCount || 0;
+
+  if (current && current.lastUsedAt && currentCount < stickyLimit) {
+    // Stay with current account; update lastUsedAt and increment count (await to ensure persistence)
+    await updateProviderConnection(current.id, {
+      lastUsedAt: new Date().toISOString(),
+      consecutiveUseCount: currentCount + 1
+    });
+    return current;
+  }
+
+  // Pick the least recently used (excluding current if possible)
+  const sortedByOldest = [...availableConnections].sort((a, b) => {
+    if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+    if (!a.lastUsedAt) return -1;
+    if (!b.lastUsedAt) return 1;
+    return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
+  });
+
+  const connection = sortedByOldest[0];
+
+  // Update lastUsedAt and reset count to 1 (await to ensure persistence)
+  await updateProviderConnection(connection.id, {
+    lastUsedAt: new Date().toISOString(),
+    consecutiveUseCount: 1
+  });
+  return connection;
+}
+
+// Latest active cooldown that blocks a pinned connection for this model (model lock, account lock, AG quota)
+function pinnedRetryAfter(connection, model, antigravityQuotaCache) {
+  const now = Date.now();
+  const candidates = [connection[getModelLockKey(model)], connection[getModelLockKey(null)]];
+  if (antigravityQuotaCache && model) candidates.push(antigravityQuotaCache.get(connection.id)?.[model]?.resetAt);
+  const active = candidates.filter((t) => t && new Date(t).getTime() > now).map((t) => new Date(t).getTime());
+  return active.length ? new Date(Math.max(...active)).toISOString() : null;
+}
+
+/**
  * Get provider credentials from localDb
  * Filters out unavailable accounts and returns the selected account based on strategy
  * @param {string} provider - Provider name
  * @param {Set<string>|string|null} excludeConnectionIds - Connection ID(s) to exclude (for retry with next account)
  * @param {string|null} model - Model name for per-model rate limit filtering
+ * @param {object} [options.sessionAffinity] - { key, mode: "soft"|"strict", ttlMs } pins a client session to one account
  */
 export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
   // Normalize to Set for consistent handling
@@ -32,6 +96,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
   const requestedModel = options?.requestedModel || model;
+  const affinity = options?.sessionAffinity?.key ? options.sessionAffinity : null;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -83,9 +148,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
+    // blockedIds = temporarily unavailable (cooldown/quota), as opposed to ineligible for this model.
+    const blockedIds = new Set();
     const availableConnections = connections.filter(c => {
-      if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
+      if (excludeSet.has(c.id) || isModelLockActive(c, model)) {
+        blockedIds.add(c.id);
+        return false;
+      }
       const enabled = c.providerSpecificData?.enabledModels;
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
@@ -94,6 +163,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
           const account = c.id?.slice(0, 8) || "unknown";
           log.info("AG_QUOTA", `${account} | CACHE_BLOCK ${model} — skip upstream until ${quota.resetAt}`);
+          blockedIds.add(c.id);
           return false;
         }
       }
@@ -149,50 +219,54 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
     }
-    if (connection) {
-      // skip strategy
-    } else if (strategy === "round-robin") {
-      const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
-
-      // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
-        if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-        if (!a.lastUsedAt) return 1;
-        if (!b.lastUsedAt) return -1;
-        return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
-      });
-
-      const current = byRecency[0];
-      const currentCount = current?.consecutiveUseCount || 0;
-
-      if (current && current.lastUsedAt && currentCount < stickyLimit) {
-        // Stay with current account
-        connection = current;
-        // Update lastUsedAt and increment count (await to ensure persistence)
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        });
-      } else {
-        // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
-          if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-          if (!a.lastUsedAt) return -1;
-          if (!b.lastUsedAt) return 1;
-          return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
-        });
-
-        connection = sortedByOldest[0];
-
-        // Update lastUsedAt and reset count to 1 (await to ensure persistence)
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: 1
-        });
+    if (!connection && affinity) {
+      const { key, mode, ttlMs } = affinity;
+      let binding = getSessionBinding(key);
+      const pinned = binding ? connections.find((c) => c.id === binding.connectionId) : null;
+      const pinnedAvailable = !!pinned && availableConnections.includes(pinned);
+      const pinnedBlocked = !!pinned && blockedIds.has(pinned.id);
+      // Remap when the account was deleted/disabled, can no longer serve this model,
+      // or is cooling down because of an auth/permission failure.
+      if (binding && !pinnedAvailable && (!pinnedBlocked || AFFINITY_PERMANENT_ERROR_CODES.has(Number(pinned.errorCode)))) {
+        log.info("AUTH", `${provider} | session binding to ${binding.connectionId?.slice(0, 8)} invalidated → reassigning`);
+        deleteSessionBinding(key);
+        binding = null;
       }
-    } else {
-      // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
+
+      if (!binding) {
+        connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
+        setSessionBinding(key, providerId, connection.id, ttlMs);
+        log.info("AUTH", `${provider} | session bound to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
+      } else if (pinnedAvailable) {
+        connection = pinned;
+        touchSessionBinding(key, ttlMs);
+        log.debug("AUTH", `${provider} | session affinity → ${connection.id?.slice(0, 8)}`);
+      } else if (mode === "strict") {
+        // Temporarily blocked: keep ownership and surface the cooldown instead of moving the session
+        touchSessionBinding(key, ttlMs);
+        const retryAfter = pinnedRetryAfter(pinned, model, isAntigravity ? antigravityQuotaCache : null);
+        log.warn("AUTH", `${provider} | session pinned to ${pinned.id?.slice(0, 8)} which is unavailable (strict affinity)`);
+        if (!retryAfter) return null;
+        return {
+          allRateLimited: true,
+          retryAfter,
+          retryAfterHuman: formatRetryAfter(retryAfter),
+          lastError: pinned.lastError || null,
+          lastErrorCode: pinned.errorCode || null
+        };
+      } else {
+        // Soft: serve from a sticky stand-in while the owner cools down; the owner keeps the binding
+        connection = availableConnections.find((c) => c.id === binding.fallbackConnectionId);
+        if (!connection) {
+          connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
+          binding.fallbackConnectionId = connection.id;
+        }
+        touchSessionBinding(key, ttlMs);
+        log.info("AUTH", `${provider} | session owner ${pinned.id?.slice(0, 8)} cooling down → ${connection.id?.slice(0, 8)}`);
+      }
+    }
+    if (!connection) {
+      connection = await pickByStrategy(availableConnections, strategy, providerOverride, settings);
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});

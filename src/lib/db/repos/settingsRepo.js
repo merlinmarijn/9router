@@ -16,6 +16,9 @@ const DEFAULT_SETTINGS = {
   quotaVisibility: {},
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
+  // Pin each client session to one account: "disabled" | "soft" | "strict"
+  sessionAffinity: "disabled",
+  sessionAffinityTtlSeconds: 14400,
   comboStrategies: {},
   capacityAdapter: {
     vision: { enabled: true, roundRobin: false, models: [] },

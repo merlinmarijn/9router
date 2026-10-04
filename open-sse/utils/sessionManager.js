@@ -157,6 +157,37 @@ function extractClientSessionId(headers, body, scope = "") {
     return fromBody || null;
 }
 
+// Headers carrying a conversation-lifetime id (Codex CLI sends `session_id` = conversation id)
+const AFFINITY_HEADER_KEYS = [...SESSION_HEADER_KEYS, "conversation_id", "x-conversation-id"];
+
+function conversationField(value) {
+    if (typeof value === "string") return normalizeSessionId(value);
+    return value && typeof value === "object" ? normalizeSessionId(value.id) : null;
+}
+
+/**
+ * Client-provided, conversation-stable id for account affinity, or null.
+ * Unlike resolveSessionIdentity this never derives/generates ids and ignores
+ * per-request ids (x-client-request-id, previous_response_id), so it is safe to
+ * key routing on before an account is picked. Returns "<kind>:<id>".
+ */
+export function extractAffinitySessionId(headers, body) {
+    const claude = extractClaudeCodeSession(body?.metadata?.user_id)
+        || headerValue(headers, CLAUDE_CODE_SESSION_HEADER);
+    if (claude) return `claude:${claude}`;
+    // prompt_cache_key is the exact unit OpenAI/Codex prompt caching is keyed on
+    const cacheKey = normalizeSessionId(body?.prompt_cache_key);
+    if (cacheKey) return `cache:${cacheKey}`;
+    for (const key of AFFINITY_HEADER_KEYS) {
+        const v = headerValue(headers, key);
+        if (v) return `session:${v}`;
+    }
+    const fromBody = normalizeSessionId(body?.session_id)
+        || normalizeSessionId(body?.conversation_id)
+        || conversationField(body?.conversation);
+    return fromBody ? `session:${fromBody}` : null;
+}
+
 function requestMessages(body) {
     if (Array.isArray(body?.messages)) return body.messages;
     if (Array.isArray(body?.input)) return body.input;

@@ -25,6 +25,9 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { extractAffinitySessionId } from "open-sse/utils/sessionManager.js";
+import { resolveSessionAffinityConfig, buildSessionAffinityKey } from "@/lib/sessionAffinity.js";
+import { resolveProviderId } from "@/shared/constants/providers.js";
 
 /**
  * Handle chat completion request
@@ -226,6 +229,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
+  // Session affinity: pin a client session (prompt_cache_key / session id) to one account
+  const affinityConfig = resolveSessionAffinityConfig(await getSettings());
+  const affinitySessionId = affinityConfig.mode !== "disabled"
+    ? extractAffinitySessionId(clientRawRequest?.headers, body)
+    : null;
+  const sessionAffinity = affinitySessionId
+    ? { ...affinityConfig, key: buildSessionAffinityKey(resolveProviderId(provider), affinitySessionId) }
+    : null;
+
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
   let lastError = null;
@@ -233,7 +245,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, sessionAffinity });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

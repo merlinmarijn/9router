@@ -26,6 +26,7 @@ export default function ProfilePage() {
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
+  const [sessionAffinityTtlDraft, setSessionAffinityTtlDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
@@ -308,6 +309,29 @@ export default function ProfilePage() {
     } catch (err) {
       console.error("Failed to update sticky limit:", err);
     }
+  };
+
+  const updateSessionAffinity = async (patch) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, ...patch }));
+      }
+    } catch (err) {
+      console.error("Failed to update session affinity:", err);
+    }
+  };
+
+  // Draft while typing; committed on blur so partial values ("1" of "14400") aren't rejected mid-edit
+  const commitSessionAffinityTtl = () => {
+    const seconds = parseInt(sessionAffinityTtlDraft);
+    setSessionAffinityTtlDraft(null);
+    if (isNaN(seconds) || seconds < 60) return;
+    updateSessionAffinity({ sessionAffinityTtlSeconds: seconds });
   };
 
   const updateComboStickyLimit = async (limit) => {
@@ -1475,6 +1499,47 @@ export default function ProfilePage() {
                   onChange={(e) => updateStickyLimit(e.target.value)}
                   disabled={loading}
                   className="w-16 sm:w-20 text-center shrink-0"
+                />
+              </div>
+            )}
+
+            {/* Session Affinity */}
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Session Affinity</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  Keep each client session (e.g. Codex prompt_cache_key) on the account that first served it.
+                  Soft fails over while it cools down; Strict waits for it.
+                </p>
+              </div>
+              <select
+                value={settings.sessionAffinity || "disabled"}
+                onChange={(e) => updateSessionAffinity({ sessionAffinity: e.target.value })}
+                disabled={loading}
+                className="shrink-0 px-2 py-1.5 bg-surface rounded border border-border text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                <option value="disabled">Disabled</option>
+                <option value="soft">Soft</option>
+                <option value="strict">Strict</option>
+              </select>
+            </div>
+
+            {(settings.sessionAffinity === "soft" || settings.sessionAffinity === "strict") && (
+              <div className="flex items-start sm:items-center justify-between gap-4 pt-2 border-t border-border/50">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm sm:text-base">Session Affinity TTL</p>
+                  <p className="text-xs sm:text-sm text-text-muted">
+                    Seconds of inactivity before a session binding expires
+                  </p>
+                </div>
+                <Input
+                  type="number"
+                  min="60"
+                  value={sessionAffinityTtlDraft ?? (settings.sessionAffinityTtlSeconds || 14400)}
+                  onChange={(e) => setSessionAffinityTtlDraft(e.target.value)}
+                  onBlur={commitSessionAffinityTtl}
+                  disabled={loading}
+                  className="w-24 text-center shrink-0"
                 />
               </div>
             )}
