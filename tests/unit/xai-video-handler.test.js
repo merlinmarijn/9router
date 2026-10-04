@@ -33,6 +33,8 @@ vi.mock("@/lib/localDb", () => ({
   getComboByName: vi.fn(async () => null),
   getModelAliases: vi.fn(async () => ({})),
   getProviderNodes: vi.fn(async () => []),
+  getProviderConnections: vi.fn(async () => []),
+  getCustomModels: vi.fn(async () => []),
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 

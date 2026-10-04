@@ -1,6 +1,7 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
-import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
+import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections, getCustomModels } from "@/lib/localDb";
+import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore, resolveProviderAlias } from "open-sse/services/model.js";
+import { isValidModel } from "open-sse/config/providerModels.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
@@ -10,7 +11,9 @@ const LOCAL_PROVIDER_ALIASES = {
 };
 
 const RESERVED_PROVIDER_PREFIXES = new Set(Object.keys(LOCAL_PROVIDER_ALIASES));
+const REGISTRY_PRIORITY = {};
 for (const entry of REGISTRY) {
+  if (entry.priority !== undefined) REGISTRY_PRIORITY[entry.id] = entry.priority;
   RESERVED_PROVIDER_PREFIXES.add(entry.id);
   if (entry.alias) RESERVED_PROVIDER_PREFIXES.add(entry.alias);
   if (entry.uiAlias) RESERVED_PROVIDER_PREFIXES.add(entry.uiAlias);
@@ -76,7 +79,41 @@ export async function getModelInfo(modelStr) {
     return { provider: null, model: parsed.model };
   }
 
-  return getModelInfoCore(modelStr, getModelAliases);
+  // User-defined aliases win; then route a bare model id (e.g. "claude-opus-5-5" from
+  // Claude Code) to a connected provider that lists it, so CLI tools work without
+  // per-model alias setup. Falls back to name-prefix inference.
+  const aliases = await getModelAliases();
+  const aliased = resolveModelAliasFromMap(parsed.model, aliases);
+  if (aliased) return aliased;
+
+  const detected = await findConnectedProviderForModel(parsed.model);
+  if (detected) return { provider: detected, model: parsed.model };
+
+  return getModelInfoCore(modelStr, aliases);
+}
+
+/**
+ * Find the first active connection (in connection priority order) whose provider
+ * serves this bare model id — via its registry model list or a custom model.
+ * @returns {Promise<string|null>} provider id
+ */
+export async function findConnectedProviderForModel(modelId) {
+  if (!modelId) return null;
+  const connections = await getProviderConnections({ isActive: true });
+  if (!connections.length) return null;
+
+  // Several providers can list the same id (claude OAuth vs anthropic API key):
+  // prefer the registry's provider priority (lower first), then connection order.
+  const providers = [...new Set(connections.map((c) => c.provider))]
+    .sort((a, b) => (REGISTRY_PRIORITY[a] ?? 999) - (REGISTRY_PRIORITY[b] ?? 999));
+  const registryMatch = providers.find((provider) => isValidModel(provider, modelId));
+  if (registryMatch) return registryMatch;
+
+  const custom = await getCustomModels();
+  return providers.find((provider) => custom.some(
+    (m) => m?.id === modelId && (m.kind || m.type || "llm") === "llm"
+      && resolveProviderAlias(m.providerAlias) === provider
+  )) || null;
 }
 
 /**
