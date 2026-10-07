@@ -288,13 +288,14 @@ describe("dashboard guard local-only access", () => {
 });
 
 describe("dashboard guard helpers", () => {
-  it("extracts bearer API keys before x-api-key", () => {
+  // Codex requires_openai_auth sends a ChatGPT bearer token plus the 9Router key in x-api-key.
+  it("extracts x-api-key before bearer tokens", () => {
     const apiRequest = request("/v1/chat/completions", {
       authorization: "Bearer bearer-key",
       "x-api-key": "header-key",
     });
 
-    expect(__test__.extractApiKey(apiRequest)).toBe("bearer-key");
+    expect(__test__.extractApiKey(apiRequest)).toBe("header-key");
   });
 
   it("extracts Google API keys after x-api-key", () => {

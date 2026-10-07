@@ -13,6 +13,7 @@ import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
+import { summarizeTools, logToolDiff } from "../utils/toolDiff.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -32,16 +33,6 @@ function isCodexResponsesLiteModel(model) {
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
-
-// Hosted tool types that Codex/OpenAI Responses executes server-side
-const CODEX_HOSTED_TOOL_TYPES = new Set([
-  "image_generation", "web_search", "web_search_preview", "file_search",
-  "computer", "computer_use_preview", "code_interpreter", "mcp", "local_shell",
-  "tool_search"
-]);
-
-// Responses-native freeform tools carry a name plus format payload and must pass through intact.
-const CODEX_PASSTHROUGH_TOOL_TYPES = new Set(["custom"]);
 
 // Allowlist of fields accepted by Codex Responses API — anything else is stripped
 const RESPONSES_API_ALLOWLIST = new Set([
@@ -74,7 +65,9 @@ function stripStoredItemReferences(body, preserveLitePrefix = false) {
   });
 }
 
-// Flatten Chat-Completions tool shape into Responses flat format + filter unsupported tools
+// Flatten Chat-Completions tool shape into Responses flat format. Responses-native
+// tools (function/custom/namespace/tool_search/hosted/future types) pass through with
+// every field intact — Codex relies on strict, defer_loading, execution, format, etc.
 function normalizeCodexTools(body) {
   if (!Array.isArray(body.tools)) return;
   const validNames = new Set();
@@ -84,6 +77,7 @@ function normalizeCodexTools(body) {
   body.tools = body.tools.filter((tool) => {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
     const type = typeof tool.type === "string" ? tool.type : "";
+    if (!type) return false;
     if (type === "namespace") {
       if (Array.isArray(tool.tools)) {
         for (const st of tool.tools) {
@@ -96,23 +90,34 @@ function normalizeCodexTools(body) {
       }
       return true;
     }
-    if (type !== "function") {
-      if (CODEX_PASSTHROUGH_TOOL_TYPES.has(type)) return true;
-      if (!type || tool.function || typeof tool.name === "string") return false;
-      return CODEX_HOSTED_TOOL_TYPES.has(type);
-    }
     const fn = tool.function && typeof tool.function === "object" && !Array.isArray(tool.function) ? tool.function : null;
-    const rawName = typeof tool.name === "string" ? tool.name : (typeof fn?.name === "string" ? fn.name : "");
-    const name = rawName.trim();
+    if (type !== "function") {
+      if (fn) return false; // Chat-shaped wrapper on a non-function type is malformed
+      if (typeof tool.name === "string") validNames.add(tool.name);
+      return true;
+    }
+    if (!fn) {
+      // Already Responses-flat: keep all fields, only sanitize name + schema.
+      const name = typeof tool.name === "string" ? tool.name.trim().slice(0, 128) : "";
+      if (!name) return false;
+      tool.name = name;
+      if (tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters)) {
+        tool.parameters = stripCodexUnsupportedPatterns(tool.parameters, patternStats);
+      } else {
+        tool.parameters = { type: "object", properties: {} };
+      }
+      validNames.add(name);
+      return true;
+    }
+    const name = typeof fn.name === "string" ? fn.name.trim() : "";
     if (!name) return false;
-    const description = typeof tool.description === "string" ? tool.description : (typeof fn?.description === "string" ? fn.description : "");
-    const parameters = (tool.parameters && typeof tool.parameters === "object" && !Array.isArray(tool.parameters))
-      ? tool.parameters
-      : (fn?.parameters && typeof fn.parameters === "object" && !Array.isArray(fn.parameters) ? fn.parameters : { type: "object", properties: {} });
-    for (const k of Object.keys(tool)) delete tool[k];
-    tool.type = "function";
+    const description = typeof fn.description === "string" ? fn.description : "";
+    const parameters = fn.parameters && typeof fn.parameters === "object" && !Array.isArray(fn.parameters)
+      ? fn.parameters : { type: "object", properties: {} };
+    delete tool.function;
     tool.name = name.slice(0, 128);
     if (description) tool.description = description;
+    if (typeof fn.strict === "boolean" && tool.strict === undefined) tool.strict = fn.strict;
     tool.parameters = stripCodexUnsupportedPatterns(parameters, patternStats);
     validNames.add(name);
     return true;
@@ -412,6 +417,7 @@ export class CodexExecutor extends BaseExecutor {
   transformRequest(model, body, stream, credentials) {
     this._isCompact = !!body._compact;
     delete body._compact;
+    const incomingTools = summarizeTools(body);
     // Resolve conversation-stable session_id (priority: body → assistant-text → workspace → machine)
     this._currentSessionId = resolveCacheSessionId(body, credentials);
     // Convert string input to array format (Codex API requires input as array)
@@ -551,9 +557,12 @@ export class CodexExecutor extends BaseExecutor {
     if (body.service_tier && body.service_tier !== "priority") delete body.service_tier;
 
     // Final allowlist filter — strip any unknown field that could trigger upstream "routing_unsupported"
+    const strippedFields = [];
     for (const k of Object.keys(body)) {
-      if (!RESPONSES_API_ALLOWLIST.has(k)) delete body[k];
+      if (!RESPONSES_API_ALLOWLIST.has(k)) { delete body[k]; strippedFields.push(k); }
     }
+    logToolDiff("CODEX", incomingTools, summarizeTools(body));
+    if (strippedFields.length) dbg("CODEX", `stripped body fields: ${strippedFields.join(", ")}`);
 
     return body;
   }

@@ -200,4 +200,43 @@ describe("CodexExecutor tool normalization", () => {
       },
     ]);
   });
+
+  // Shape captured from Codex 0.160.1 (`codex exec`, gpt-5.5) on 2026-10-07.
+  it("preserves every tool and field of a real Codex request", () => {
+    const captured = [
+      { type: "function", name: "exec_command", description: "run", strict: false, parameters: { type: "object", properties: { cmd: { type: "string" } } } },
+      { type: "custom", name: "apply_patch", description: "patch", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } },
+      { type: "namespace", name: "mcp__cua_repl", description: "repl", tools: [
+        { type: "function", name: "js", strict: false, defer_loading: true, parameters: { type: "object", properties: { code: { type: "string" } } } },
+      ] },
+      { type: "tool_search", execution: "client", description: "Tool discovery", parameters: { type: "object", properties: { query: { type: "string" } } } },
+      { type: "web_search", external_web_access: false, search_content_types: ["text", "image"] },
+      { type: "some_future_tool", name: "x", extra: { a: 1 } },
+    ];
+    const tools = normalizeTools(structuredClone(captured));
+    expect(tools).toHaveLength(captured.length);
+    expect(tools).toEqual(captured);
+  });
+
+  it("keeps strict when flattening Chat-Completions function tools", () => {
+    const tools = normalizeTools([{ type: "function", function: { name: "f", strict: true, parameters: { type: "object", properties: {} } } }]);
+    expect(tools).toEqual([{ type: "function", name: "f", strict: true, parameters: { type: "object", properties: {} } }]);
+  });
+
+  it("preserves Responses Lite additional_tools prefix (gpt-6 code mode)", () => {
+    const executor = new CodexExecutor();
+    const prefix = { type: "additional_tools", role: "developer", tools: [
+      { type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } }] },
+      { type: "namespace", name: "mcp__cua_repl", tools: [{ type: "function", name: "js", parameters: { type: "object", properties: {} } }] },
+    ] };
+    const body = {
+      model: "gpt-6.1-sol",
+      input: [structuredClone(prefix), { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      tool_choice: "auto",
+      stream: true,
+    };
+    executor.transformRequest("gpt-6.1-sol", body, true, { connectionId: "lite", providerSpecificData: {} });
+    expect(body.input[0].tools).toEqual(prefix.tools);
+  });
 });
+

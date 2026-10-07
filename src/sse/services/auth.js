@@ -430,16 +430,16 @@ export async function clearAccountError(connectionId, currentConnection, model =
  * Extract API key from request headers
  */
 export function extractApiKey(request) {
-  // Check Authorization header first
-  const authHeader = request.headers.get("Authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    return authHeader.slice(7);
-  }
-
-  // Check Anthropic x-api-key header
+  // x-api-key first: Codex with `requires_openai_auth = true` puts its ChatGPT
+  // token in Authorization and the 9Router key in x-api-key (see dashboardGuard).
   const xApiKey = request.headers.get("x-api-key");
   if (xApiKey) {
     return xApiKey;
+  }
+
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7);
   }
 
   return null;

@@ -139,10 +139,12 @@ function isPublicLlmApi(pathname) {
 }
 
 function extractApiKey(request) {
-  const authHeader = request.headers.get("Authorization");
-  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
+  // x-api-key wins: Codex with `requires_openai_auth = true` sends its ChatGPT
+  // token as Authorization and the 9Router key via http_headers x-api-key.
   const apiKeyHeader = request.headers.get("x-api-key");
   if (apiKeyHeader) return apiKeyHeader;
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
   const googleApiKeyHeader = request.headers.get("x-goog-api-key");
   if (googleApiKeyHeader) return googleApiKeyHeader;
   return request.nextUrl.searchParams?.get("key") || null;
