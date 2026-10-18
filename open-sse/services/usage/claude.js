@@ -28,6 +28,23 @@ const oauthCooldown = new Map();
 const USAGE_CACHE_TTL_MS = 300000;
 const usageCache = new Map(); // token -> { promise } | { result, expiresAt }
 
+// Retry-After alone is a retry delay, not proof of subscription exhaustion.
+export function getClaudeQuotaResetAt(headers, usage, model, now = Date.now()) {
+  const resets = [];
+  headers?.forEach((value, name) => {
+    if (value !== "rejected" || !/^anthropic-ratelimit-unified(?:-.*)?-status$/.test(name)) return;
+    resets.push(Number(headers.get(name.replace(/-status$/, "-reset"))) * 1000);
+  });
+  const family = /^claude-([a-z]+)/.exec(model || "")?.[1];
+  for (const [name, quota] of Object.entries(usage?.quotas || {})) {
+    const applies = name === "session (5h)" || name === "weekly (7d)" ||
+      (family && name === `weekly ${family} (7d)`);
+    if (applies && quota?.remainingPercentage === 0) resets.push(Date.parse(quota.resetAt));
+  }
+  const future = resets.filter((time) => Number.isFinite(time) && time > now && time < 8.64e15);
+  return future.length ? Math.max(...future) : null;
+}
+
 export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
   const force = options?.force === true;
 

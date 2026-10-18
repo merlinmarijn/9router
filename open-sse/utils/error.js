@@ -117,16 +117,19 @@ export function createErrorResult(statusCode, message, resetsAtMs, extraHeaders 
 export function unavailableResponse(statusCode, message, retryAfter, retryAfterHuman, extraHeaders = null) {
   const retryAfterSec = Math.max(Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000), 1);
   const msg = `${message} (${retryAfterHuman})`;
+  const headers = new Headers(extraHeaders || {});
+  const upstreamRetry = headers.get("retry-after");
+  const upstreamDelay = /^\d+(?:\.\d+)?$/.test(upstreamRetry || "")
+    ? Number(upstreamRetry) : (Date.parse(upstreamRetry) - Date.now()) / 1000;
+  if (!Number.isFinite(upstreamDelay) || upstreamDelay < retryAfterSec) {
+    headers.set("retry-after", String(retryAfterSec));
+  }
+  headers.set("Content-Type", "application/json");
   return new Response(
     JSON.stringify({ error: { message: msg } }),
     {
       status: statusCode,
-      headers: {
-        ...extraHeaders,
-        "Content-Type": "application/json",
-        // Intentionally mis-cased to prevent duplicate headers
-        "retry-after": String(retryAfterSec)
-      }
+      headers
     }
   );
 }

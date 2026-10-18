@@ -98,14 +98,15 @@ export function getEarliestRateLimitedUntil(accounts) {
 }
 
 /**
- * Format rateLimitedUntil to human-readable "reset after Xm Ys"
+ * Format a retry deadline. Only verified quota resets may be called resets.
  * @param {string} rateLimitedUntil - ISO timestamp
- * @returns {string} e.g. "reset after 2m 30s"
+ * @returns {string} e.g. "retry after 2m 30s"
  */
-export function formatRetryAfter(rateLimitedUntil) {
+export function formatRetryAfter(rateLimitedUntil, quotaReset = false) {
   if (!rateLimitedUntil) return "";
+  const prefix = quotaReset ? "reset after" : "retry after";
   const diffMs = new Date(rateLimitedUntil).getTime() - Date.now();
-  if (diffMs <= 0) return "reset after 0s";
+  if (diffMs <= 0) return `${prefix} 0s`;
   const totalSec = Math.ceil(diffMs / 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
@@ -114,7 +115,7 @@ export function formatRetryAfter(rateLimitedUntil) {
   if (h > 0) parts.push(`${h}h`);
   if (m > 0) parts.push(`${m}m`);
   if (s > 0 || parts.length === 0) parts.push(`${s}s`);
-  return `reset after ${parts.join(" ")}`;
+  return `${prefix} ${parts.join(" ")}`;
 }
 
 /** Prefix for model lock flat fields on connection record */
@@ -128,15 +129,24 @@ export function getModelLockKey(model) {
   return model ? `${MODEL_LOCK_PREFIX}${model}` : MODEL_LOCK_ALL;
 }
 
+export function getModelResetKey(model) {
+  return `quotaReset_${model || "__all"}`;
+}
+
+export function isQuotaReset(connection, model, retryAfter) {
+  return [model, null].some((scope) =>
+    connection?.[getModelLockKey(scope)] === retryAfter &&
+    connection?.[getModelResetKey(scope)] === retryAfter);
+}
+
 /**
  * Check if a model lock on a connection is still active.
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
  */
 export function isModelLockActive(connection, model) {
   const key = getModelLockKey(model);
-  const expiry = connection[key] || connection[MODEL_LOCK_ALL];
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > Date.now();
+  return [connection[key], connection[MODEL_LOCK_ALL]]
+    .some(expiry => expiry && new Date(expiry).getTime() > Date.now());
 }
 
 /**
