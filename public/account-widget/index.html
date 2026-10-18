@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>9router Accounts</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header id="handle">
+    <div class="wordmark"><span class="mark">9</span><strong>Accounts</strong><span id="count"></span></div>
+    <nav aria-label="Widget controls">
+      <button id="refresh" title="Refresh accounts" aria-label="Refresh accounts">↻</button>
+      <button id="pin" title="Always on top" aria-label="Always on top" aria-pressed="true">⌖</button>
+      <button id="settings" title="Connection settings" aria-label="Connection settings" aria-expanded="false">⋯</button>
+    </nav>
+  </header>
+  <section id="preferences" hidden aria-label="Connection settings">
+    <form id="connect">
+      <label id="urlLabel">9router URL<input id="url" type="url" value="http://localhost:20127" required spellcheck="false"></label>
+      <label>Dashboard password<input id="password" type="password" autocomplete="current-password" placeholder="Only needed when login is enabled"></label>
+      <div class="actions"><button type="submit">Connect</button><button id="quit" type="button">Quit widget</button></div>
+      <p>Refreshes every minute. Claude quotas refresh every 10 minutes. Password stays in memory for sign-in only.</p>
+    </form>
+  </section>
+  <p id="notice" role="status" hidden></p>
+  <main id="accounts" aria-label="Accounts by provider"><div class="empty">Connecting to 9router…</div></main>
+  <footer><span id="connection"><i></i> Connecting</span><span id="updated">All-time totals</span></footer>
+</body>
+</html>
