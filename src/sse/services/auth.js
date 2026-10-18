@@ -3,7 +3,7 @@ import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/con
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, getModelLockKey, getModelResetKey, isQuotaReset } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
-import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
 import { MOST_QUOTA_STRATEGY, pickByQuota, rankByQuota, noteQuotaActivity, isOverQuotaBudget } from "./quotaRouting.js";
 import { getSessionBinding, setSessionBinding, touchSessionBinding, deleteSessionBinding } from "@/lib/sessionAffinity.js";
 import * as log from "../utils/logger.js";
@@ -78,7 +78,11 @@ async function pickByStrategy(availableConnections, strategy, providerOverride, 
 function pinnedRetryAfter(connection, model, antigravityQuotaCache) {
   const now = Date.now();
   const candidates = [connection[getModelLockKey(model)], connection[getModelLockKey(null)]];
-  if (antigravityQuotaCache && model) candidates.push(antigravityQuotaCache.get(connection.id)?.[model]?.resetAt);
+  if (antigravityQuotaCache && model) {
+    const quotas = antigravityQuotaCache.get(connection.id);
+    const quota = getAntigravityModelQuota(quotas, model) || quotas?.[model];
+    if (quota?.remainingPercentage <= 0) candidates.push(quota.resetAt);
+  }
   const active = candidates.filter((t) => t && new Date(t).getTime() > now).map((t) => new Date(t).getTime());
   return active.length ? new Date(Math.max(...active)).toISOString() : null;
 }
@@ -133,6 +137,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionNoProxy: resolvedProxy.connectionNoProxy,
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
+          strictProxy: resolvedProxy.strictProxy === true,
         },
       };
     }
@@ -161,7 +166,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
-        const quota = antigravityQuotaCache.get(c.id)?.[model];
+        const connQuotas = antigravityQuotaCache.get(c.id);
+        const quota = getAntigravityModelQuota(connQuotas, model) || connQuotas?.[model];
         if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
           const account = c.id?.slice(0, 8) || "unknown";
           log.info("AG_QUOTA", `${account} | CACHE_BLOCK ${model} — skip upstream until ${quota.resetAt}`);
@@ -301,6 +307,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionNoProxy: resolvedProxy.connectionNoProxy,
         connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
+        strictProxy: resolvedProxy.strictProxy === true,
       },
       connectionId: connection.id,
       // Include current status for optimization check
