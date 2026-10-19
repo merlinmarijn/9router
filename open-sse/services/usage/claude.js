@@ -48,31 +48,36 @@ export function getClaudeQuotaResetAt(headers, usage, model, now = Date.now()) {
 export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
   const force = options?.force === true;
 
-  // Serve in-flight or fresh cached result (skip on manual force)
-  if (!force && accessToken) {
-    const hit = usageCache.get(accessToken);
-    if (hit?.promise) return hit.promise;
-    if (hit && hit.expiresAt > Date.now()) return hit.result;
-  }
+  const hit = accessToken ? usageCache.get(accessToken) : null;
+  // Force skips the TTL, but still shares an active request.
+  if (hit?.promise) return hit.promise;
+  if (!force && hit?.expiresAt > Date.now()) return hit.result;
 
-  const stale = (!force && accessToken && usageCache.get(accessToken)?.result) || null;
+  const entry = { result: hit?.result, expiresAt: hit?.expiresAt };
 
   const promise = (async () => {
     const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
     // Only cache real quota data, not soft-failure {message: ...} payloads
     if (accessToken && result?.quotas) {
-      usageCache.set(accessToken, {
-        result,
-        expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
-      });
+      entry.result = result;
+      entry.expiresAt = Date.now() + USAGE_CACHE_TTL_MS;
       return result;
     }
     // Soft failure (429/error): prefer the last good read over a transient error
-    if (stale) return stale;
+    entry.expiresAt = 0;
+    if (entry.result) return { ...entry.result, error: result?.message || "Claude usage unavailable" };
     return result;
-  })();
+  })().finally(() => {
+    // A settled promise must never pin a failed read in cache forever.
+    // Do not restore an entry invalidated by a limit reset while fetching.
+    if (accessToken && usageCache.get(accessToken) === entry) {
+      delete entry.promise;
+      if (!entry.result) usageCache.delete(accessToken);
+    }
+  });
 
-  if (accessToken) usageCache.set(accessToken, { promise });
+  entry.promise = promise;
+  if (accessToken) usageCache.set(accessToken, entry);
   return promise;
 }
 

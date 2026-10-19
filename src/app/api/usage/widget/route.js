@@ -11,10 +11,10 @@ let snapshot;
 let snapshotAt = 0;
 let pending;
 
-async function accountQuota(connection, request) {
+async function accountQuota(connection, request, force) {
   const previous = cache.get(connection.id);
   const interval = connection.provider === "claude" ? 600000 : 60000;
-  if (previous && Date.now() - previous.at < interval) return previous;
+  if (!force && previous && Date.now() - previous.at < interval) return previous;
   try {
     const context = { params: Promise.resolve({ connectionId: connection.id }) };
     const response = await getQuota(request, context);
@@ -43,7 +43,7 @@ async function accountQuota(connection, request) {
   }
 }
 
-async function collect(request) {
+async function collect(request, force) {
   const [connections, stats] = await Promise.all([getProviderConnections(), getUsageStats("all")]);
   const ids = new Set(connections.map(c => c.id));
   for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id);
@@ -57,7 +57,7 @@ async function collect(request) {
   const accounts = [];
   // Bound provider traffic and avoid concurrent refreshes from this endpoint.
   for (const connection of connections) {
-    accounts.push(widgetAccount(connection, await accountQuota(connection, request), usage.get(connection.id)));
+    accounts.push(widgetAccount(connection, await accountQuota(connection, request, force), usage.get(connection.id)));
   }
   return { updatedAt: new Date().toISOString(), period: "all", accounts };
 }
@@ -65,8 +65,9 @@ async function collect(request) {
 // Dashboard guard protects this route; no API keys, OAuth tokens or raw payloads leave it.
 export async function GET(request) {
   try {
-    if (!snapshot || Date.now() - snapshotAt >= 60000) {
-      pending ||= collect(request).then(value => {
+    const force = new URL(request.url).searchParams.get("force") === "1";
+    if (force || !snapshot || Date.now() - snapshotAt >= 60000) {
+      pending ||= collect(request, force).then(value => {
         snapshot = value;
         snapshotAt = Date.now();
       }).finally(() => { pending = null; });

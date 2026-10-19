@@ -58,9 +58,9 @@ function render(data) {
 }
 function notice(message) { $('notice').textContent = message; $('notice').hidden = !message; }
 function preferences(open) { $('preferences').hidden = !open; $('settings').setAttribute('aria-expanded', String(open)); }
-async function request(action, password) {
-  if (native) return native.invoke(action, action === 'login' ? { base, password } : { base });
-  const response = await fetch(action === 'login' ? '/api/auth/login' : '/api/usage/widget', {
+async function request(action, password, force = false) {
+  if (native) return native.invoke(action, action === 'login' ? { base, password } : { base, force });
+  const response = await fetch(action === 'login' ? '/api/auth/login' : '/api/usage/widget' + (force ? '?force=1' : ''), {
     method: action === 'login' ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
     headers: action === 'login' ? { 'Content-Type': 'application/json' } : {},
     body: action === 'login' ? JSON.stringify({ password }) : undefined,
@@ -70,12 +70,12 @@ async function request(action, password) {
   if (!response.ok) throw new Error(data.error || `9router returned HTTP ${response.status}`);
   return data;
 }
-async function refresh() {
+async function refresh(force = false) {
   if (busy) return;
   busy = true;
   $('refresh').disabled = true;
   try {
-    const data = await request('accounts');
+    const data = await request('accounts', undefined, force);
     if (!Array.isArray(data.accounts)) throw new Error('Invalid account reply. Update 9router.');
     snapshot = data;
     receivedAt = new Date();
@@ -99,7 +99,7 @@ async function refresh() {
     $('refresh').disabled = false;
   }
 }
-$('refresh').onclick = refresh;
+$('refresh').onclick = () => refresh(true);
 $('settings').onclick = () => preferences($('preferences').hidden);
 $('handle').onpointerdown = event => {
   if (native && event.button === 0 && !event.target.closest('button')) native.invoke('drag').catch(error => notice(String(error)));
