@@ -4,7 +4,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
-import { MOST_QUOTA_STRATEGY, pickByQuota, rankByQuota, noteQuotaActivity, isOverQuotaBudget } from "./quotaRouting.js";
+import { MOST_QUOTA_STRATEGY, pickByQuota, rankByQuota, noteQuotaActivity, shouldReassignSession } from "./quotaRouting.js";
 import { getSessionBinding, setSessionBinding, touchSessionBinding, deleteSessionBinding } from "@/lib/sessionAffinity.js";
 import * as log from "../utils/logger.js";
 
@@ -237,12 +237,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         deleteSessionBinding(key);
         binding = null;
       }
-      // codex-lb budget pressure: an owner nearly out of quota hands the session to a
-      // healthier account — only when one exists, otherwise moving just loses the cache.
-      if (binding && pinnedAvailable && strategy === MOST_QUOTA_STRATEGY && isOverQuotaBudget(pinned)) {
+      // Quota pressure: hand the session to a better account when the owner is nearly out,
+      // or another account's quota would expire unused (≥2× burn rate). Never to a worse one.
+      if (binding && pinnedAvailable && strategy === MOST_QUOTA_STRATEGY) {
         const best = rankByQuota(availableConnections, model)[0];
-        if (best && best !== pinned && !isOverQuotaBudget(best)) {
-          log.info("AUTH", `${provider} | session owner ${pinned.id?.slice(0, 8)} near quota limit → reassigning`);
+        if (shouldReassignSession(pinned, best)) {
+          log.info("AUTH", `${provider} | session ${pinned.id?.slice(0, 8)} → ${best.id?.slice(0, 8)} (quota pressure) → reassigning`);
           deleteSessionBinding(key);
           binding = null;
         }

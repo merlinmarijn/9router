@@ -1549,7 +1549,7 @@ export default function ProfilePage() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-sm sm:text-base">Most Quota Left</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  Send new sessions to the account with the most weekly quota left (then 5h, then least recently used)
+                  Use quota before it resets: prefer the account whose weekly limit would go unused soonest (skips accounts out of 5h quota)
                 </p>
               </div>
               <Toggle
