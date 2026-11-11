@@ -1,16 +1,12 @@
 /**
- * "Most Quota Left" account strategy — use-it-or-lose-it ranking.
+ * "Most Quota Left" account strategy — codex-lb's deterministic `usage_weighted`.
  *
- * Ranks connections from the provider usage APIs (open-sse/services/usage.js),
- * the same numbers the Usage dashboard shows:
- *   1. usable first: 5h window under budget and weekly window not exhausted
- *      (a window whose reset time has passed counts as refilled);
- *   2. highest weekly burn rate needed = weekly % left / hours until reset.
- *      Quota on an account that resets soon is lost if unused, so it drains
- *      first (37% left resetting in 1d14h beats 33% left resetting in 5d7h);
- *   3. most 5h left, then least recently selected, then priority.
- * Unknown usage counts as 100% left over a full window, so providers without a
- * usage API rotate new sessions across accounts.
+ * Ranks connections by remaining subscription quota as reported by the
+ * provider usage APIs (open-sse/services/usage.js) — the same numbers the
+ * Usage dashboard shows: most long-window (weekly/monthly) left first, then
+ * most short-window (5h) left, then least recently selected. Unknown usage
+ * counts as 100% left (as in codex-lb), so providers without a usage API
+ * rotate new sessions across accounts.
  *
  * Selection never waits on the network: it ranks from an in-memory snapshot
  * and kicks a background refresh for stale entries. Tokens are never refreshed
@@ -26,11 +22,6 @@ const IDLE_MAX_AGE_MS = 5 * 60 * 1000;     // accounts not currently serving tra
 const ACTIVE_MAX_AGE_MS = 60 * 1000;       // the account just picked (it's the one draining)
 const FETCH_TIMEOUT_MS = 10 * 1000;
 const LONG_WINDOW_RE = /week|7\s*d|month/i;
-const HOUR_MS = 3600 * 1000;
-// ponytail: unknown reset time assumed to be a full weekly window; pass resetAt from the usage API to be exact.
-const DEFAULT_LONG_WINDOW_H = 7 * 24;
-// A sticky session moves only when another account needs ≥ this × the owner's burn rate (keeps prompt cache).
-const URGENCY_REASSIGN_RATIO = 2;
 
 // Main pools per provider; anything else (review/spark/per-model pools) is ignored for these.
 const PROVIDER_QUOTA_KEYS = {
@@ -60,21 +51,13 @@ function remainingPercent(quota) {
   return Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : null;
 }
 
-// Tightest window among names: { pct, resetAt (ms|null) } or null
-function tightest(quotas, names) {
-  let best = null;
-  for (const n of names) {
-    const pct = remainingPercent(quotas[n]);
-    if (pct === null || (best && pct >= best.pct)) continue;
-    const resetAt = Date.parse(quotas[n]?.resetAt);
-    best = { pct, resetAt: Number.isFinite(resetAt) ? resetAt : null };
-  }
-  return best;
+function minPercent(quotas, names) {
+  const values = names.map((n) => remainingPercent(quotas[n])).filter((v) => v !== null);
+  return values.length ? Math.min(...values) : null;
 }
 
 /**
- * Reduce a usage payload to { long, short, longResetAt, shortResetAt }: remaining
- * percentages (null = not reported) and window reset times in ms (null = unknown).
+ * Reduce a usage payload to { long, short } remaining percentages (null = not reported).
  * Generic providers: long = weekly/monthly windows; short = per-model pools matching
  * the requested model if any exist, otherwise every other window.
  */
@@ -93,38 +76,16 @@ export function scoreQuotas(providerId, quotas, model = null) {
     const forModel = lowerModel ? rest.filter((n) => n.toLowerCase().includes(lowerModel)) : [];
     shortNames = forModel.length ? forModel : rest;
   }
-  const long = tightest(quotas, longNames);
-  const short = tightest(quotas, shortNames);
-  if (!long && !short) return null;
-  return { long: long?.pct ?? null, short: short?.pct ?? null, longResetAt: long?.resetAt ?? null, shortResetAt: short?.resetAt ?? null };
+  const long = minPercent(quotas, longNames);
+  const short = minPercent(quotas, shortNames);
+  return long === null && short === null ? null : { long, short };
 }
 
-// Remaining % right now: unknown = 100, and a window past its reset time has refilled.
-function effective(pct, resetAt, now) {
-  if (pct === null || pct === undefined) return 100;
-  return resetAt && resetAt <= now ? 100 : pct;
-}
-
-/** Reset-aware view of a snapshot: { long, short, urgency (%/h needed to use it all), usable }. */
-export function evaluateScore(score, now = Date.now()) {
-  const long = effective(score?.long, score?.longResetAt, now);
-  const short = effective(score?.short, score?.shortResetAt, now);
-  const reset = score?.longResetAt;
-  const hours = reset && reset > now ? Math.max((reset - now) / HOUR_MS, 1) : DEFAULT_LONG_WINDOW_H;
-  return {
-    long,
-    short,
-    urgency: long / hours,
-    usable: 100 - short < SHORT_BUDGET_USED_PCT && 100 - long < LONG_BUDGET_USED_PCT,
-  };
-}
-
-// Usable first, then highest weekly burn rate needed, then most 5h left, then least recently selected, then priority.
+// Most long-window left, then most short-window left, then least recently selected, then priority.
 function compare(a, b) {
-  if (a.view.usable !== b.view.usable) return a.view.usable ? -1 : 1;
-  const urgencyDiff = b.view.urgency - a.view.urgency;
-  if (urgencyDiff) return urgencyDiff;
-  const shortDiff = b.view.short - a.view.short;
+  const longDiff = (b.score?.long ?? 100) - (a.score?.long ?? 100);
+  if (longDiff) return longDiff;
+  const shortDiff = (b.score?.short ?? 100) - (a.score?.short ?? 100);
   if (shortDiff) return shortDiff;
   const selectedDiff = (lastSelected.get(a.conn.id) || 0) - (lastSelected.get(b.conn.id) || 0);
   if (selectedDiff) return selectedDiff;
@@ -134,20 +95,9 @@ function compare(a, b) {
 /** True when the account is past codex-lb's sticky budget (≥95% short or 100% long used). */
 export function isOverQuotaBudget(connection) {
   const score = connection ? cache.get(connection.id)?.score : null;
-  return !!score && !evaluateScore(score).usable;
-}
-
-/**
- * Should a sticky session leave `pinned` for `best`? Yes when the owner is past its
- * budget, or `best` needs ≥2× the burn rate to avoid wasting quota before its reset.
- * Never onto an account that is itself past budget (moving would just lose the cache).
- */
-export function shouldReassignSession(pinned, best) {
-  if (!pinned || !best || pinned === best) return false;
-  const p = evaluateScore(cache.get(pinned.id)?.score);
-  const b = evaluateScore(cache.get(best.id)?.score);
-  if (!b.usable) return false;
-  return !p.usable || b.urgency >= p.urgency * URGENCY_REASSIGN_RATIO;
+  if (!score) return false;
+  return (score.short !== null && 100 - score.short >= SHORT_BUDGET_USED_PCT)
+    || (score.long !== null && 100 - score.long >= LONG_BUDGET_USED_PCT);
 }
 
 async function fetchScore(connection, model) {
@@ -191,9 +141,8 @@ export function refreshQuotaIfStale(connection, model = null, maxAgeMs = IDLE_MA
 /** Most-quota-first ordering of candidates; schedules refreshes for stale snapshots. */
 export function rankByQuota(connections, model = null) {
   for (const conn of connections) refreshQuotaIfStale(conn, model);
-  const now = Date.now();
   return connections
-    .map((conn) => ({ conn, view: evaluateScore(cache.get(conn.id)?.score, now) }))
+    .map((conn) => ({ conn, score: cache.get(conn.id)?.score || null }))
     .sort(compare)
     .map((entry) => entry.conn);
 }
