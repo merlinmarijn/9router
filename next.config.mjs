@@ -36,6 +36,8 @@ const nextConfig = {
   },
   env: {},
   experimental: {
+    // Limit build workers to reduce peak memory on small Docker/Dokploy hosts.
+    cpus: 2,
     // #1529/#1572: LLM clients can send long context or base64 image payloads through /v1 rewrites.
     proxyClientMaxBodySize,
     // Cache fetch responses across HMR refreshes for faster dev reloads.
