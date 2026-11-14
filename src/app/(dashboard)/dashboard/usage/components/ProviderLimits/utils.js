@@ -839,36 +839,3 @@ export function parseQuotaData(provider, data) {
 
   return normalizedQuotas;
 }
-
-export const COMBINED_LIMITS_STORAGE_KEY = "quotaCombinedLimits";
-export const COMBINABLE_PROVIDERS = ["claude", "codex"];
-
-/**
- * Average percent-based windows (5h, weekly, ...) across a provider's active
- * accounts: 100%-used + 0%-used => 50% used. Reset = earliest across accounts.
- * ponytail: equal weight per account; weight by plan size if mixed tiers matter.
- */
-export function combineProviderQuotas(provider, connections = [], quotaData = {}) {
-  const groups = new Map();
-  let accounts = 0;
-  for (const conn of connections) {
-    if (conn.provider !== provider || conn.isActive === false) continue;
-    const quotas = (quotaData[conn.id]?.quotas || []).filter(
-      (q) => q.total === 100 && !q.unlimited && Number.isFinite(q.remaining),
-    );
-    if (!quotas.length) continue;
-    accounts++;
-    for (const q of quotas) {
-      const g = groups.get(q.name) || { name: q.name, remaining: 0, count: 0, resetAt: null };
-      g.remaining += Math.max(0, Math.min(100, q.remaining));
-      g.count++;
-      if (q.resetAt && (!g.resetAt || new Date(q.resetAt) < new Date(g.resetAt))) g.resetAt = q.resetAt;
-      groups.set(q.name, g);
-    }
-  }
-  const quotas = [...groups.values()].map((g) => {
-    const remaining = Math.round(g.remaining / g.count);
-    return { name: g.name, used: 100 - remaining, total: 100, remaining, remainingPercentage: remaining, resetAt: g.resetAt };
-  });
-  return { accounts, quotas };
-}

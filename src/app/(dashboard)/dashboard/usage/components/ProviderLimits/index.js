@@ -38,9 +38,6 @@ import {
   ACCOUNT_PAGE_SIZE_MAX,
   ACCOUNT_FILTER_OPTIONS,
   QUOTA_SORT_OPTIONS,
-  COMBINED_LIMITS_STORAGE_KEY,
-  COMBINABLE_PROVIDERS,
-  combineProviderQuotas,
 } from "./utils";
 import Card from "@/shared/components/Card";
 import { ConfirmModal, EditConnectionModal } from "@/shared/components";
@@ -206,7 +203,6 @@ export default function ProviderLimits() {
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [quotaVisibility, setQuotaVisibility] = useState({});
   const [expiringFirst, setExpiringFirst] = useState(false);
-  const [combinedLimits, setCombinedLimits] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
   const [page, setPage] = useState(1);
@@ -596,9 +592,6 @@ export default function ProviderLimits() {
     const stored = window.localStorage.getItem(AUTO_REFRESH_STORAGE_KEY);
     setAutoRefresh(stored === null ? true : stored === "true");
     setHasHydratedAutoRefresh(true);
-    try {
-      setCombinedLimits(window.localStorage.getItem(COMBINED_LIMITS_STORAGE_KEY) === "true");
-    } catch {}
   }, []);
 
   // Persist auto-refresh preference
@@ -1047,25 +1040,6 @@ export default function ProviderLimits() {
             <span className="hidden sm:inline">Expiring first</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              const next = !combinedLimits;
-              setCombinedLimits(next);
-              try {
-                window.localStorage.setItem(COMBINED_LIMITS_STORAGE_KEY, String(next));
-              } catch {}
-            }}
-            aria-pressed={combinedLimits}
-            className={`flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs transition-colors ${combinedLimits ? "border-sky-500/40 bg-sky-500/10 text-sky-500" : "border-black/10 text-text-primary hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"}`}
-            title="Show combined 5h/weekly limits averaged across active Claude/Codex accounts"
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              functions
-            </span>
-            <span className="hidden sm:inline">Combined</span>
-          </button>
-
           {/* Bulk: disable depleted */}
           <button
             type="button"
@@ -1138,37 +1112,6 @@ export default function ProviderLimits() {
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
           Expiring-first currently reorders accounts inside the current page.
           Cross-page ordering still follows backend pagination.
-        </div>
-      )}
-
-      {combinedLimits && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {COMBINABLE_PROVIDERS.map((provider) => {
-            const combined = combineProviderQuotas(provider, sortedConnections, quotaData);
-            if (!combined.accounts) return null;
-            return (
-              <Card key={`combined-${provider}`} padding="none" className="min-w-0 border-sky-500/30">
-                <div className="flex items-center gap-2 px-3 py-2 border-b border-black/10 dark:border-white/10">
-                  <ProviderIcon
-                    src={`/providers/${provider}.png`}
-                    alt={provider}
-                    size={24}
-                    className="object-contain"
-                    fallbackText={provider.slice(0, 2).toUpperCase()}
-                  />
-                  <h3 className="text-sm font-semibold text-text-primary truncate">
-                    {providerLabel(provider)} combined
-                  </h3>
-                  <span className="text-[10px] text-text-muted">
-                    avg of {combined.accounts} active account{combined.accounts > 1 ? "s" : ""}
-                  </span>
-                </div>
-                <div className="px-3 py-2">
-                  <QuotaTable quotas={combined.quotas} compact sortMode="default" />
-                </div>
-              </Card>
-            );
-          })}
         </div>
       )}
 
